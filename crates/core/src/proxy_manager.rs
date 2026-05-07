@@ -273,7 +273,10 @@ impl ProxyManager {
         rules
             .into_iter()
             .map(|rule| {
-                let rt = inner.get(&rule.name).cloned().unwrap_or_else(RuntimeState::new);
+                let rt = inner
+                    .get(&rule.name)
+                    .cloned()
+                    .unwrap_or_else(RuntimeState::new);
                 ProxyEntry {
                     rule,
                     status: rt.status,
@@ -292,7 +295,10 @@ impl ProxyManager {
         rules
             .into_iter()
             .map(|rule| {
-                let rt = inner.get(&rule.name).cloned().unwrap_or_else(RuntimeState::new);
+                let rt = inner
+                    .get(&rule.name)
+                    .cloned()
+                    .unwrap_or_else(RuntimeState::new);
                 ProxyEntry {
                     rule,
                     status: rt.status,

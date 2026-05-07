@@ -569,7 +569,8 @@ impl ProxyListenerManager {
         let mgr = self.clone();
         tokio::spawn(async move {
             let (bytes_in, bytes_out) =
-                bridge_stream_to_framed(user_stream, work_framed, conn_id, &mgr, &proxy_name_owned).await;
+                bridge_stream_to_framed(user_stream, work_framed, conn_id, &mgr, &proxy_name_owned)
+                    .await;
             tracing::info!(
                 "代理 {} 连接 {} 已结束 (↑{}B ↓{}B)",
                 proxy_name_owned,

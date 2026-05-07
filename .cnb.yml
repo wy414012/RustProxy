@@ -39,3 +39,106 @@ $:
           script: cargo clippy --all --     
         - name: build
           script: cargo build --release --all-features --target=aarch64-unknown-linux-musl
+
+  tag_push:
+    # Pipeline 1: 构建 x86_64 二进制并打包
+    - runner:
+        cpus: 8
+      docker:
+        image: docker.cnb.cool/yamingnetwork/ide/rust:stable
+      stages:
+        - name: build x86_64
+          script: cargo build --release --all-features --target=x86_64-unknown-linux-musl
+        - name: package server x86_64
+          script: |
+            mkdir -p dist/server
+            cp target/x86_64-unknown-linux-musl/release/rustproxy-server dist/server/
+            cp configs/server.toml dist/server/
+            cp deploy/rustproxy-server.service dist/server/
+            cd dist/server && tar czf ../rustproxy-server-x86_64-musl.tar.gz rustproxy-server server.toml rustproxy-server.service
+        - name: package client x86_64
+          script: |
+            mkdir -p dist/client
+            cp target/x86_64-unknown-linux-musl/release/rustproxy-client dist/client/
+            cp configs/client.toml dist/client/
+            cp deploy/rustproxy-client.service dist/client/
+            cd dist/client && tar czf ../rustproxy-client-x86_64-musl.tar.gz rustproxy-client client.toml rustproxy-client.service
+        - name: notify amd64 done
+          type: cnb:resolve
+          options:
+            key: build-amd64-done
+        - name: wait for release
+          type: cnb:await
+          options:
+            key: release-created
+        - name: upload x86_64
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - "./dist/rustproxy-server-x86_64-musl.tar.gz"
+              - "./dist/rustproxy-client-x86_64-musl.tar.gz"
+
+    # Pipeline 2: 构建 aarch64 二进制并打包
+    - runner:
+        tags: cnb:arch:arm64:v8
+        cpus: 8
+      docker:
+        image: docker.cnb.cool/yamingnetwork/ide/rust:stable
+      stages:
+        - name: build aarch64
+          script: cargo build --release --all-features --target=aarch64-unknown-linux-musl
+        - name: package server aarch64
+          script: |
+            mkdir -p dist/server
+            cp target/aarch64-unknown-linux-musl/release/rustproxy-server dist/server/
+            cp configs/server.toml dist/server/
+            cp deploy/rustproxy-server.service dist/server/
+            cd dist/server && tar czf ../rustproxy-server-aarch64-musl.tar.gz rustproxy-server server.toml rustproxy-server.service
+        - name: package client aarch64
+          script: |
+            mkdir -p dist/client
+            cp target/aarch64-unknown-linux-musl/release/rustproxy-client dist/client/
+            cp configs/client.toml dist/client/
+            cp deploy/rustproxy-client.service dist/client/
+            cd dist/client && tar czf ../rustproxy-client-aarch64-musl.tar.gz rustproxy-client client.toml rustproxy-client.service
+        - name: notify arm64 done
+          type: cnb:resolve
+          options:
+            key: build-arm64-done
+        - name: wait for release
+          type: cnb:await
+          options:
+            key: release-created
+        - name: upload aarch64
+          image: cnbcool/attachments:latest
+          settings:
+            attachments:
+              - "./dist/rustproxy-server-aarch64-musl.tar.gz"
+              - "./dist/rustproxy-client-aarch64-musl.tar.gz"
+
+    # Pipeline 3: 等待双架构构建完成，创建 Release
+    - docker:
+        image: docker.cnb.cool/yamingnetwork/ide/rust:stable
+      stages:
+        - name: wait amd64
+          type: cnb:await
+          options:
+            key: build-amd64-done
+        - name: wait arm64
+          type: cnb:await
+          options:
+            key: build-arm64-done
+        - name: changelog
+          image: cnbcool/changelog
+          settings:
+            latestChangeLogTarget: LATEST_CHANGELOG.md
+        - name: create release
+          type: git:release
+          options:
+            title: $CNB_BRANCH
+            descriptionFromFile: LATEST_CHANGELOG.md
+        - name: notify release created
+          type: cnb:resolve
+          options:
+            key: release-created
+          
