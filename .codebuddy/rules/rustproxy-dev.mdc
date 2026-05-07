@@ -1,0 +1,107 @@
+---
+description: 
+alwaysApply: true
+enabled: true
+updatedAt: 2026-05-07T09:27:23.200Z
+provider: 
+---
+
+# RustProxy 项目开发规范
+
+## 项目概述
+RustProxy 是一个轻量级内网穿透工具（类 frp），使用 Rust 构建。服务端通过 Web 面板管理映射到客户端的端口，支持 TCP/UDP/HTTP/HTTPS。服务端与客户端之间通过 TLS 加密隧道 + Token 双向认证通信。
+
+## Workspace 架构
+```
+crates/
+├── core/    → rustproxy-core    共享基础库（配置、错误、日志）
+├── proto/   → rustproxy-proto   通信协议（消息定义、帧编解码）
+├── server/  → rustproxy-server  服务端二进制
+├── client/  → rustproxy-client  客户端二进制
+└── web/     → rustproxy-web     Web 管理面板（嵌入服务端）
+```
+
+### 依赖方向（严格单向，禁止循环）
+```
+server → web → core
+server → proto → core
+client → proto → core
+```
+- `core` 不依赖任何内部 crate
+- `proto` 仅依赖 `core`
+- `web` 仅依赖 `core`
+- `server` 依赖 `core`、`proto`、`web`
+- `client` 依赖 `core`、`proto`
+
+## 编码规范
+
+### 零警告原则（最重要）
+- **每次代码变更后必须确保 `cargo check` 零警告**，不得累积技术债务
+- 未使用的导入、变量、字段必须立即清理，不用 `#[allow(unused)]` 压制
+- 如果字段/变量暂时不用，用 `_` 前缀标记意图（如 `_name`）
+- `todo!()` 宏仅用于脚手架占位，实现功能时必须替换为真实代码
+- CI 流水线包含 `cargo clippy`，所有 clippy 警告视为错误处理
+
+### 命名约定
+- Crate 名: `rustproxy-{name}`（如 `rustproxy-core`、`rustproxy-proto`）
+- 模块文件: snake_case（如 `frame.rs`、`message.rs`）
+- 类型/结构体: PascalCase（如 `ProxyRule`、`FrameCodec`）
+- 函数/方法: snake_case（如 `parse_server_config`）
+- 常量: SCREAMING_SNAKE_CASE（如 `HEADER_SIZE`）
+- 配置字段: snake_case，TOML 中使用 `proxy_type` 而非 `type`
+
+### 错误处理
+- 库 crate（core/proto/web）使用 `thiserror` 定义具体错误类型，返回 `Result<T, Error>`
+- 二进制 crate（server/client）使用 `anyhow::Result` 作为顶层入口
+- 错误消息使用中文描述，便于国内开发者理解
+- 不要用 `unwrap()`，用 `?` 或 `.map_err()` 传播错误
+
+### 异步编程
+- 使用 `tokio` 异步运行时，所有 IO 操作必须是异步的
+- 使用 `tokio_util::codec` 实现帧编解码
+- 使用 `tokio::sync` 而非 `std::sync` 的锁（如 `Mutex`、`RwLock`）
+- 共享状态使用 `Arc` 包裹
+
+### 通信协议
+- 帧格式: `[4B length][1B type][2B reserved][N bytes payload]`
+- 控制消息: `ControlMessage` 枚举，走 JSON 序列化
+- 数据消息: `DataMessage` 结构体，走纯二进制编码（`conn_id: u64 BE + raw data`）
+- 两者在 `Message` 枚举中统一：`Message::Control(...)` / `Message::Data(...)`
+- **不要让 `DataMessage` 实现 `Serialize/Deserialize`**，它携带 `Bytes` 二进制数据
+
+### 配置格式
+- 使用 TOML 格式，定义在 `configs/` 目录下
+- 配置结构体定义在 `crates/core/src/config.rs`
+- 新增配置项必须同步更新模板文件和结构体
+
+### Web API
+- 使用 Axum 框架，路由定义在 `crates/web/src/api.rs`
+- 共享状态通过 `AppState` 传递（`crates/web/src/state.rs`）
+- API 路径统一以 `/api` 为前缀
+- 新增 API 端点必须同步更新路由注册
+
+### 日志
+- 使用 `tracing` + `tracing-subscriber`
+- 通过 `RUST_LOG` 环境变量控制日志级别，默认 `info`
+- 日志初始化统一调用 `rustproxy_core::logger::init()`
+
+### TLS
+- 使用 `tokio-rustls` + `rustls`（不使用 native-tls）
+- 自签证书使用 `rcgen` 自动生成
+- 证书管理逻辑放在 `crates/server` 中
+
+## CI 约束
+项目 `.cnb.yml` 配置了以下 CI 阶段（amd64 + arm64 双架构）：
+1. `cargo check` — 编译检查
+2. `cargo test --all` — 全量测试
+3. `cargo fmt --all -- --check` — 格式检查
+4. `cargo clippy --all --` — Lint 检查
+5. `cargo build --release --all-features --target=...-musl` — 交叉编译
+
+**提交代码前必须本地通过以上所有检查。**
+
+## 开发流程
+1. 修改代码后立即执行 `cargo check` 确认零警告
+2. 实现 TODO 项时，先在 `core` 定义类型，再在 `proto`/`web` 使用，最后在 `server`/`client` 集成
+3. 新增依赖先在 `Cargo.toml` (workspace) 的 `[workspace.dependencies]` 添加版本，再在子 crate 中引用
+4. 保持 release profile 优化配置：`lto = true, codegen-units = 1, strip = true`
