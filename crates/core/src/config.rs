@@ -74,6 +74,9 @@ pub struct ProxyRule {
     /// 自定义域名（HTTP/HTTPS 有效）
     #[serde(default)]
     pub custom_domains: Vec<String>,
+    /// PROXY Protocol 版本: "" (关闭) / "v1" / "v2"
+    #[serde(default)]
+    pub proxy_protocol: String,
 }
 
 /// 代理协议类型

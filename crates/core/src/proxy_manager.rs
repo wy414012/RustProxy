@@ -109,7 +109,8 @@ impl ProxyManager {
                 local_ip    TEXT NOT NULL,
                 local_port  INTEGER NOT NULL,
                 remote_port INTEGER NOT NULL DEFAULT 0,
-                custom_domains TEXT NOT NULL DEFAULT '[]'
+                custom_domains TEXT NOT NULL DEFAULT '[]',
+                proxy_protocol TEXT NOT NULL DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_proxy_rules_client_id ON proxy_rules(client_id);
@@ -138,12 +139,18 @@ impl ProxyManager {
                 local_ip    TEXT NOT NULL,
                 local_port  INTEGER NOT NULL,
                 remote_port INTEGER NOT NULL DEFAULT 0,
-                custom_domains TEXT NOT NULL DEFAULT '[]'
+                custom_domains TEXT NOT NULL DEFAULT '[]',
+                proxy_protocol TEXT NOT NULL DEFAULT ''
             );
 
             CREATE INDEX IF NOT EXISTS idx_proxy_rules_client_id ON proxy_rules(client_id);
+
+            -- 为旧版本数据库迁移添加 proxy_protocol 列
+            ALTER TABLE proxy_rules ADD COLUMN proxy_protocol TEXT NOT NULL DEFAULT '';
             ",
-        )?;
+        )
+        // ALTER TABLE 在列已存在时会报错，忽略此错误
+        .or_else(|_| -> anyhow::Result<()> { Ok(()) })?;
 
         tracing::info!("数据库已打开: {}", db_path);
         Ok(Self {
@@ -168,8 +175,8 @@ impl ProxyManager {
         {
             let db = self.db.lock().await;
             db.execute(
-                "INSERT INTO proxy_rules (name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO proxy_rules (name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     rule.name,
                     rule.proxy_type.as_str(),
@@ -178,6 +185,7 @@ impl ProxyManager {
                     rule.local_port,
                     rule.remote_port,
                     domains_json,
+                    rule.proxy_protocol,
                 ],
             )
             .map_err(|e| format!("数据库写入失败: {}", e))?;
@@ -231,7 +239,7 @@ impl ProxyManager {
         let rows = {
             let db = self.db.lock().await;
             db.execute(
-                "UPDATE proxy_rules SET proxy_type=?2, client_id=?3, local_ip=?4, local_port=?5, remote_port=?6, custom_domains=?7 WHERE name=?1",
+                "UPDATE proxy_rules SET proxy_type=?2, client_id=?3, local_ip=?4, local_port=?5, remote_port=?6, custom_domains=?7, proxy_protocol=?8 WHERE name=?1",
                 params![
                     name,
                     new_rule.proxy_type.as_str(),
@@ -240,6 +248,7 @@ impl ProxyManager {
                     new_rule.local_port,
                     new_rule.remote_port,
                     domains_json,
+                    new_rule.proxy_protocol,
                 ],
             )
             .map_err(|e| format!("数据库更新失败: {}", e))?
@@ -401,7 +410,7 @@ impl ProxyManager {
     async fn query_rule(&self, name: &str) -> Result<ProxyRule, String> {
         let db = self.db.lock().await;
         let mut stmt = db
-            .prepare("SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains FROM proxy_rules WHERE name = ?1")
+            .prepare("SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol FROM proxy_rules WHERE name = ?1")
             .map_err(|e| format!("数据库查询失败: {}", e))?;
 
         stmt.query_row(params![name], |row| {
@@ -412,6 +421,7 @@ impl ProxyManager {
             let local_port: u16 = row.get(4)?;
             let remote_port: u16 = row.get(5)?;
             let domains_json: String = row.get(6)?;
+            let proxy_protocol: String = row.get(7)?;
 
             let proxy_type = parse_proxy_type(&proxy_type_str);
             let custom_domains: Vec<String> =
@@ -425,6 +435,7 @@ impl ProxyManager {
                 local_port,
                 remote_port,
                 custom_domains,
+                proxy_protocol,
             })
         })
         .map_err(|e| format!("{}", e))
@@ -433,7 +444,7 @@ impl ProxyManager {
     async fn query_all_rules(&self) -> Vec<ProxyRule> {
         let db = self.db.lock().await;
         let mut stmt = match db.prepare(
-            "SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains FROM proxy_rules",
+            "SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol FROM proxy_rules",
         ) {
             Ok(s) => s,
             Err(_) => return vec![],
@@ -447,6 +458,7 @@ impl ProxyManager {
             let local_port: u16 = row.get(4)?;
             let remote_port: u16 = row.get(5)?;
             let domains_json: String = row.get(6)?;
+            let proxy_protocol: String = row.get(7)?;
 
             let proxy_type = parse_proxy_type(&proxy_type_str);
             let custom_domains: Vec<String> =
@@ -460,6 +472,7 @@ impl ProxyManager {
                 local_port,
                 remote_port,
                 custom_domains,
+                proxy_protocol,
             })
         }) {
             Ok(r) => r,
@@ -472,7 +485,7 @@ impl ProxyManager {
     async fn query_rules_by_client(&self, client_id: &str) -> Vec<ProxyRule> {
         let db = self.db.lock().await;
         let mut stmt = match db.prepare(
-            "SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains FROM proxy_rules WHERE client_id = ?1",
+            "SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol FROM proxy_rules WHERE client_id = ?1",
         ) {
             Ok(s) => s,
             Err(_) => return vec![],
@@ -486,6 +499,7 @@ impl ProxyManager {
             let local_port: u16 = row.get(4)?;
             let remote_port: u16 = row.get(5)?;
             let domains_json: String = row.get(6)?;
+            let proxy_protocol: String = row.get(7)?;
 
             let proxy_type = parse_proxy_type(&proxy_type_str);
             let custom_domains: Vec<String> =
@@ -499,6 +513,7 @@ impl ProxyManager {
                 local_port,
                 remote_port,
                 custom_domains,
+                proxy_protocol,
             })
         }) {
             Ok(r) => r,
@@ -541,6 +556,7 @@ mod tests {
             local_port: 22,
             remote_port: 6000,
             custom_domains: vec![],
+            proxy_protocol: String::new(),
         };
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -566,6 +582,7 @@ mod tests {
                 local_port: 22,
                 remote_port: 6000,
                 custom_domains: vec![],
+                proxy_protocol: String::new(),
             })
             .await
             .unwrap();
@@ -578,6 +595,7 @@ mod tests {
                 local_port: 80,
                 remote_port: 0,
                 custom_domains: vec!["example.com".to_string()],
+                proxy_protocol: String::new(),
             })
             .await
             .unwrap();
@@ -606,6 +624,7 @@ mod tests {
                 local_port: 22,
                 remote_port: 6000,
                 custom_domains: vec![],
+                proxy_protocol: String::new(),
             })
             .await
             .unwrap();
@@ -631,6 +650,7 @@ mod tests {
                 local_port: 22,
                 remote_port: 6000,
                 custom_domains: vec![],
+                proxy_protocol: String::new(),
             })
             .await
             .unwrap();
@@ -644,6 +664,7 @@ mod tests {
                     local_port: 53,
                     remote_port: 6001,
                     custom_domains: vec![],
+                    proxy_protocol: String::new(),
                 })
                 .await;
             assert!(result.is_err());
@@ -667,6 +688,7 @@ mod tests {
                 local_port: 8080,
                 remote_port: 9090,
                 custom_domains: vec![],
+                proxy_protocol: "v1".to_string(),
             })
             .await
             .unwrap();
@@ -679,6 +701,7 @@ mod tests {
             assert_eq!(proxies.len(), 1);
             assert_eq!(proxies[0].rule.name, "persistent-rule");
             assert_eq!(proxies[0].rule.remote_port, 9090);
+            assert_eq!(proxies[0].rule.proxy_protocol, "v1");
         }
     }
 }

@@ -176,6 +176,14 @@ td.actions{white-space:nowrap}
       <div class="form-group" id="domainGroup" style="display:none"><label>自定义域名</label><input id="proxyDomains" placeholder="api.example.com, web.example.com"><div style="font-size:11px;color:var(--text3);margin-top:3px">基于域名路由，逗号分隔</div></div>
     </div>
     <div class="form-group"><label>映射客户端服务地址</label><input id="proxyLocalAddr" placeholder="8080 或 192.168.1.100:3306"><div style="font-size:11px;color:var(--text3);margin-top:3px">客户端本地服务地址，只填端口默认 127.0.0.1</div></div>
+    <div class="form-group"><label>PROXY Protocol</label>
+      <select id="proxyProtocol">
+        <option value="">关闭（不注入）</option>
+        <option value="v1">v1（文本格式，兼容性好）</option>
+        <option value="v2">v2（二进制格式，效率高）</option>
+      </select>
+      <div style="font-size:11px;color:var(--text3);margin-top:3px">向本地服务注入 PROXY Protocol 头，让后端获取用户真实 IP</div>
+    </div>
     <div class="actions">
       <button class="btn btn-ghost" onclick="hideProxyModal()">取消</button>
       <button class="btn btn-primary" id="modalSubmitBtn" onclick="submitProxy()">创建</button>
@@ -273,10 +281,11 @@ function renderStats(status, proxies, clients) {
 function renderProxies(proxies) {
   const t = document.getElementById('proxyTable');
   if (!proxies.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
-  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>服务端口</th><th>客户端地址</th><th>域名</th><th>状态</th><th>连接</th><th>带宽</th><th>操作</th></tr></thead>
+  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>服务端口</th><th>客户端地址</th><th>域名</th><th>PROXY</th><th>状态</th><th>连接</th><th>带宽</th><th>操作</th></tr></thead>
   <tbody>${proxies.map(p=>{
     const isStream = (p.proxy_type==='tcp'||p.proxy_type==='udp');
     const clientAddr = (p.local_ip&&p.local_ip!=='127.0.0.1') ? p.local_ip+':'+p.local_port : '127.0.0.1:'+p.local_port;
+    const ppLabel = p.proxy_protocol ? 'v'+p.proxy_protocol.replace('v','') : '-';
     return `<tr>
     <td style="color:var(--text)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
@@ -284,6 +293,7 @@ function renderProxies(proxies) {
     <td>${isStream?(p.remote_port||'-'):'共享'}</td>
     <td>${esc(clientAddr)}</td>
     <td>${p.custom_domains.length?p.custom_domains.map(esc).join(', '):'-'}</td>
+    <td>${ppLabel}</td>
     <td><span class="badge badge-${p.status}">${p.status}</span></td>
     <td>${p.connections}</td>
     <td style="font-size:12px">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
@@ -324,6 +334,7 @@ function showCreateModal() {
   document.getElementById('proxyRemotePort').value = '';
   document.getElementById('proxyLocalAddr').value = '';
   document.getElementById('proxyDomains').value = '';
+  document.getElementById('proxyProtocol').value = '';
   onProxyTypeChange();
   document.getElementById('proxyModal').classList.add('show');
   document.getElementById('proxyName').focus();
@@ -344,6 +355,7 @@ async function editProxy(name) {
     const addr = p.local_ip + ':' + p.local_port;
     document.getElementById('proxyLocalAddr').value = addr;
     document.getElementById('proxyDomains').value = p.custom_domains.join(', ');
+    document.getElementById('proxyProtocol').value = p.proxy_protocol || '';
     onProxyTypeChange();
     document.getElementById('proxyModal').classList.add('show');
   } catch(e) { toast(e.message, 'error'); }
@@ -369,6 +381,7 @@ async function submitProxy() {
   const remotePort = parseInt(document.getElementById('proxyRemotePort').value) || 0;
   const localAddr = document.getElementById('proxyLocalAddr').value.trim();
   const domains = document.getElementById('proxyDomains').value.trim().split(',').map(s=>s.trim()).filter(Boolean);
+  const proxyProtocol = document.getElementById('proxyProtocol').value;
 
   // 解析客户端服务地址
   let localIp = '127.0.0.1';
@@ -400,12 +413,12 @@ async function submitProxy() {
   try {
     if (editingProxy) {
       // 更新模式：只发送有变化的字段
-      const body = { type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains };
+      const body = { type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains, proxy_protocol: proxyProtocol };
       await api('PUT', '/proxies/' + encodeURIComponent(editingProxy), body);
       toast('规则更新成功','success');
     } else {
       // 创建模式
-      await api('POST', '/proxies', {name, type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains});
+      await api('POST', '/proxies', {name, type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains, proxy_protocol: proxyProtocol});
       toast('规则创建成功','success');
     }
     hideProxyModal();

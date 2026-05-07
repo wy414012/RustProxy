@@ -118,6 +118,9 @@ pub struct ServerAssignProxyRequest {
     /// 自定义域名（HTTP/HTTPS 有效）
     #[serde(default)]
     pub custom_domains: Vec<String>,
+    /// PROXY Protocol 版本: "" / "v1" / "v2"
+    #[serde(default)]
+    pub proxy_protocol: String,
 }
 
 /// 服务端要求客户端关闭代理
@@ -138,6 +141,9 @@ pub struct NewWorkConnRequest {
     pub proxy_name: String,
     /// 连接 ID（服务端分配）
     pub conn_id: u64,
+    /// 用户真实 IP 地址（格式: "ip:port"）
+    #[serde(default)]
+    pub user_addr: Option<String>,
 }
 
 /// 新建工作连接响应（客户端 → 服务端）

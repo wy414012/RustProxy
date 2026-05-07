@@ -158,6 +158,7 @@ pub async fn handle_client_with_auth(
             local_port: entry.rule.local_port,
             remote_port: entry.rule.remote_port,
             custom_domains: entry.rule.custom_domains.clone(),
+            proxy_protocol: entry.rule.proxy_protocol.clone(),
         };
         let msg = Message::Control(ControlMessage::ServerAssignProxy(assign_req));
         if framed.send(msg).await.is_err() {

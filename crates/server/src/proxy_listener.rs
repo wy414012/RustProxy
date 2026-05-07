@@ -132,9 +132,10 @@ impl ProxyListenerManager {
                         let mgr = mgr.clone();
                         let proxy_name = name.clone();
                         let cid = client_id.clone();
+                        let user_addr = Some(peer_addr.to_string());
                         tokio::spawn(async move {
                             if let Err(e) = mgr
-                                .handle_stream_proxy_conn(&proxy_name, &cid, stream)
+                                .handle_stream_proxy_conn(&proxy_name, &cid, stream, user_addr)
                                 .await
                             {
                                 tracing::warn!("代理 {} 处理连接失败: {}", proxy_name, e);
@@ -277,6 +278,7 @@ impl ProxyListenerManager {
         let work_req = NewWorkConnRequest {
             proxy_name: proxy_name.to_string(),
             conn_id: new_conn_id,
+            user_addr: Some(src_addr.to_string()),
         };
         let sent = self
             .session_manager
@@ -397,8 +399,9 @@ impl ProxyListenerManager {
                     Ok((stream, peer_addr)) => {
                         tracing::debug!("HTTP 代理收到连接: {}", peer_addr);
                         let mgr = mgr.clone();
+                        let user_addr = Some(peer_addr.to_string());
                         tokio::spawn(async move {
-                            if let Err(e) = mgr.handle_http_proxy_conn(stream).await {
+                            if let Err(e) = mgr.handle_http_proxy_conn(stream, user_addr).await {
                                 tracing::debug!("HTTP 代理连接处理失败: {}", e);
                             }
                         });
@@ -416,7 +419,11 @@ impl ProxyListenerManager {
     }
 
     /// 处理 HTTP 代理连接
-    async fn handle_http_proxy_conn(&self, stream: TcpStream) -> anyhow::Result<()> {
+    async fn handle_http_proxy_conn(
+        &self,
+        stream: TcpStream,
+        user_addr: Option<String>,
+    ) -> anyhow::Result<()> {
         // 1. 先读取足够的数据来解析 Host 头
         let mut peek_buf = vec![0u8; 4096];
         let n = stream.peek(&mut peek_buf).await?;
@@ -437,7 +444,7 @@ impl ProxyListenerManager {
         let rule = rule.ok_or_else(|| anyhow::anyhow!("未找到域名 {} 的代理规则", host))?;
 
         // 4. 像普通 TCP 一样处理
-        self.handle_stream_proxy_conn(&rule.name, &rule.client_id, stream)
+        self.handle_stream_proxy_conn(&rule.name, &rule.client_id, stream, user_addr)
             .await
     }
 
@@ -466,6 +473,7 @@ impl ProxyListenerManager {
                         tracing::debug!("HTTPS 代理收到连接: {}", peer_addr);
                         let mgr = mgr.clone();
                         let acceptor = tls_acceptor.clone();
+                        let user_addr = Some(peer_addr.to_string());
                         tokio::spawn(async move {
                             // 先 peek SNI
                             let mut peek_buf = vec![0u8; 4096];
@@ -507,7 +515,12 @@ impl ProxyListenerManager {
 
                             // TLS 终止后，像普通 TCP 一样桥接
                             if let Err(e) = mgr
-                                .handle_stream_proxy_conn(&rule.name, &rule.client_id, tls_stream)
+                                .handle_stream_proxy_conn(
+                                    &rule.name,
+                                    &rule.client_id,
+                                    tls_stream,
+                                    user_addr,
+                                )
                                 .await
                             {
                                 tracing::debug!("HTTPS 代理连接处理失败: {}", e);
@@ -538,6 +551,7 @@ impl ProxyListenerManager {
         proxy_name: &str,
         client_id: &str,
         user_stream: S,
+        user_addr: Option<String>,
     ) -> anyhow::Result<()>
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -558,6 +572,7 @@ impl ProxyListenerManager {
         let work_req = NewWorkConnRequest {
             proxy_name: proxy_name.to_string(),
             conn_id,
+            user_addr,
         };
         let sent = self
             .session_manager

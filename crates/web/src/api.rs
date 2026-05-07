@@ -65,6 +65,7 @@ struct ProxyInfo {
     local_port: u16,
     remote_port: u16,
     custom_domains: Vec<String>,
+    proxy_protocol: String,
     status: String,
     connections: u64,
     bandwidth_in: f64,
@@ -81,6 +82,7 @@ impl From<ProxyEntry> for ProxyInfo {
             local_port: e.rule.local_port,
             remote_port: e.rule.remote_port,
             custom_domains: e.rule.custom_domains,
+            proxy_protocol: e.rule.proxy_protocol,
             status: e.status.to_string(),
             connections: e.connections,
             bandwidth_in: e.bandwidth_in,
@@ -101,6 +103,8 @@ struct CreateProxyRequest {
     remote_port: u16,
     #[serde(default)]
     custom_domains: Vec<String>,
+    #[serde(default)]
+    proxy_protocol: String,
 }
 
 #[derive(Deserialize)]
@@ -112,6 +116,7 @@ struct UpdateProxyRequest {
     local_port: Option<u16>,
     remote_port: Option<u16>,
     custom_domains: Option<Vec<String>>,
+    proxy_protocol: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -197,6 +202,7 @@ async fn create_proxy(
         local_port: payload.local_port,
         remote_port: payload.remote_port,
         custom_domains: payload.custom_domains,
+        proxy_protocol: payload.proxy_protocol,
     };
 
     let mgr = state.proxy_manager();
@@ -215,6 +221,7 @@ async fn create_proxy(
         local_port: rule.local_port,
         remote_port: rule.remote_port,
         custom_domains: rule.custom_domains.clone(),
+        proxy_protocol: rule.proxy_protocol.clone(),
     };
     let msg_json = serde_json::to_string(
         &rustproxy_proto::message::ControlMessage::ServerAssignProxy(assign_msg),
@@ -271,6 +278,7 @@ async fn update_proxy(
         local_port: payload.local_port.unwrap_or(existing.local_port),
         remote_port: payload.remote_port.unwrap_or(existing.remote_port),
         custom_domains: payload.custom_domains.unwrap_or(existing.custom_domains),
+        proxy_protocol: payload.proxy_protocol.unwrap_or(existing.proxy_protocol),
     };
 
     if let Err(e) = mgr.update_proxy(&name, updated_rule.clone()).await {
@@ -290,6 +298,7 @@ async fn update_proxy(
         local_port: updated_rule.local_port,
         remote_port: updated_rule.remote_port,
         custom_domains: updated_rule.custom_domains.clone(),
+        proxy_protocol: updated_rule.proxy_protocol.clone(),
     };
     let msg_json = serde_json::to_string(
         &rustproxy_proto::message::ControlMessage::ServerAssignProxy(assign_msg),

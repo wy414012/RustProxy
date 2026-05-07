@@ -11,7 +11,9 @@ use tokio_util::codec::Framed;
 
 use rustproxy_core::config::ClientConfig;
 use rustproxy_proto::frame::FrameCodec;
-use rustproxy_proto::message::{AuthRequest, AuthResponse, ControlMessage, Message};
+use rustproxy_proto::message::{
+    AuthRequest, AuthResponse, ControlMessage, Message, NewWorkConnRequest,
+};
 
 use crate::proxy_worker::ProxyWorkerManager;
 
@@ -73,8 +75,8 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
                             }
                             ControlMessage::ServerAssignProxy(req) => {
                                 tracing::info!(
-                                    "收到代理规则: {} ({} -> {}:{}, remote_port={})",
-                                    req.name, req.proxy_type, req.local_ip, req.local_port, req.remote_port
+                                    "收到代理规则: {} ({} -> {}:{}, remote_port={}, proxy_protocol={})",
+                                    req.name, req.proxy_type, req.local_ip, req.local_port, req.remote_port, req.proxy_protocol
                                 );
                                 if let Err(e) = proxy_manager.start_proxy(req, config).await {
                                     tracing::error!("启动代理失败: {}", e);
@@ -86,14 +88,14 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
                             }
                             ControlMessage::NewWorkConn(req) => {
                                 tracing::debug!(
-                                    "新建工作连接: {} (conn_id={})",
-                                    req.proxy_name, req.conn_id
+                                    "新建工作连接: {} (conn_id={}, user_addr={:?})",
+                                    req.proxy_name, req.conn_id, req.user_addr
                                 );
                                 let cfg = config.clone();
-                                let proxy_name = req.proxy_name.clone();
-                                let conn_id = req.conn_id;
-                                let local_addr = proxy_manager.get_local_addr(&req.proxy_name).await;
-                                let proxy_type = proxy_manager.get_proxy_type(&req.proxy_name).await;
+                                let NewWorkConnRequest { proxy_name, conn_id, user_addr } = req;
+                                let local_addr = proxy_manager.get_local_addr(&proxy_name).await;
+                                let proxy_type = proxy_manager.get_proxy_type(&proxy_name).await;
+                                let proxy_protocol = proxy_manager.get_proxy_protocol(&proxy_name).await;
                                 tokio::spawn(async move {
                                     let addr = match local_addr {
                                         Some(a) => a,
@@ -104,7 +106,7 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
                                     };
                                     let ptype = proxy_type.unwrap_or_else(|| "tcp".to_string());
                                     if let Err(e) = crate::proxy_worker::open_work_connection(
-                                        &cfg, &proxy_name, conn_id, &addr, &ptype,
+                                        &cfg, &proxy_name, conn_id, &addr, &ptype, user_addr, proxy_protocol,
                                     )
                                     .await
                                     {

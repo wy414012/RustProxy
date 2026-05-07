@@ -32,6 +32,8 @@ pub struct ProxyWorkerManager {
     local_addrs: Arc<RwLock<HashMap<String, String>>>,
     /// 代理名称 -> 代理类型
     proxy_types: Arc<RwLock<HashMap<String, String>>>,
+    /// 代理名称 -> PROXY Protocol 版本
+    proxy_protocols: Arc<RwLock<HashMap<String, String>>>,
     /// 代理名称 -> 工作任务句柄
     tasks: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
 }
@@ -41,6 +43,7 @@ impl ProxyWorkerManager {
         Self {
             local_addrs: Arc::new(RwLock::new(HashMap::new())),
             proxy_types: Arc::new(RwLock::new(HashMap::new())),
+            proxy_protocols: Arc::new(RwLock::new(HashMap::new())),
             tasks: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -62,12 +65,17 @@ impl ProxyWorkerManager {
             let mut types = self.proxy_types.write().await;
             types.insert(req.name.clone(), req.proxy_type.clone());
         }
+        {
+            let mut protocols = self.proxy_protocols.write().await;
+            protocols.insert(req.name.clone(), req.proxy_protocol.clone());
+        }
 
         tracing::info!(
-            "代理规则已注册: {} -> {} (type={})",
+            "代理规则已注册: {} -> {} (type={}, proxy_protocol={})",
             req.name,
             local_addr,
-            req.proxy_type
+            req.proxy_type,
+            req.proxy_protocol
         );
         Ok(())
     }
@@ -78,6 +86,8 @@ impl ProxyWorkerManager {
         addrs.remove(name);
         let mut types = self.proxy_types.write().await;
         types.remove(name);
+        let mut protocols = self.proxy_protocols.write().await;
+        protocols.remove(name);
 
         let mut tasks = self.tasks.write().await;
         if let Some(handle) = tasks.remove(name) {
@@ -92,6 +102,8 @@ impl ProxyWorkerManager {
         addrs.clear();
         let mut types = self.proxy_types.write().await;
         types.clear();
+        let mut protocols = self.proxy_protocols.write().await;
+        protocols.clear();
 
         let mut tasks = self.tasks.write().await;
         for (name, handle) in tasks.drain() {
@@ -110,6 +122,12 @@ impl ProxyWorkerManager {
     pub async fn get_proxy_type(&self, name: &str) -> Option<String> {
         let types = self.proxy_types.read().await;
         types.get(name).cloned()
+    }
+
+    /// 获取代理规则的 PROXY Protocol 版本
+    pub async fn get_proxy_protocol(&self, name: &str) -> Option<String> {
+        let protocols = self.proxy_protocols.read().await;
+        protocols.get(name).cloned()
     }
 }
 
@@ -130,13 +148,17 @@ pub async fn open_work_connection(
     conn_id: u64,
     local_addr: &str,
     proxy_type: &str,
+    user_addr: Option<String>,
+    proxy_protocol: Option<String>,
 ) -> anyhow::Result<()> {
     tracing::info!(
-        "建立工作连接: proxy={}, conn_id={}, local={}, type={}",
+        "建立工作连接: proxy={}, conn_id={}, local={}, type={}, user_addr={:?}, proxy_protocol={:?}",
         proxy_name,
         conn_id,
         local_addr,
-        proxy_type
+        proxy_type,
+        user_addr,
+        proxy_protocol
     );
 
     // 1. 建立新的 TLS 连接到服务端
@@ -186,12 +208,148 @@ pub async fn open_work_connection(
                 }
             };
 
+            // 注入 PROXY Protocol 头（在数据转发前写入）
+            let pp_version = proxy_protocol.as_deref().unwrap_or("");
+            if !pp_version.is_empty() {
+                if let Err(e) =
+                    inject_proxy_protocol(&mut local_stream, &user_addr, pp_version).await
+                {
+                    tracing::warn!(
+                        "代理 {} PROXY Protocol 注入失败: {}，继续不注入",
+                        proxy_name,
+                        e
+                    );
+                }
+            }
+
             bridge_local_tcp_to_framed(&mut local_stream, &mut framed, conn_id).await;
         }
     }
 
     tracing::info!("工作连接已结束: proxy={}, conn_id={}", proxy_name, conn_id);
     Ok(())
+}
+
+/// 注入 PROXY Protocol 头到本地连接
+///
+/// 在 TCP 连接建立后、业务数据传输前，写入 PROXY Protocol 头，
+/// 让后端服务能获取到用户的真实 IP 地址。
+async fn inject_proxy_protocol(
+    local_stream: &mut tokio::net::TcpStream,
+    user_addr: &Option<String>,
+    version: &str,
+) -> anyhow::Result<()> {
+    let header = match version {
+        "v1" => build_proxy_protocol_v1(user_addr)?,
+        "v2" => build_proxy_protocol_v2(user_addr)?,
+        other => anyhow::bail!("不支持的 PROXY Protocol 版本: {}", other),
+    };
+    local_stream.write_all(&header).await?;
+    tracing::debug!(
+        "PROXY Protocol {} 头已注入 ({} bytes)",
+        version,
+        header.len()
+    );
+    Ok(())
+}
+
+/// 构建 PROXY Protocol v1 头（文本格式）
+///
+/// 格式: `PROXY TCP4 src_ip dst_ip src_port dst_port\r\n`
+/// 或:   `PROXY TCP6 src_ip dst_ip src_port dst_port\r\n`
+/// 或:   `PROXY UNKNOWN\r\n`（无法确定地址时）
+fn build_proxy_protocol_v1(user_addr: &Option<String>) -> anyhow::Result<Vec<u8>> {
+    match user_addr {
+        Some(addr_str) => {
+            // 解析 "ip:port" 格式
+            let addr: std::net::SocketAddr = addr_str
+                .parse()
+                .map_err(|e| anyhow::anyhow!("解析用户地址失败 {}: {}", addr_str, e))?;
+
+            match addr {
+                std::net::SocketAddr::V4(v4) => {
+                    let header = format!(
+                        "PROXY TCP4 {} 127.0.0.1 {} {}\r\n",
+                        v4.ip(),
+                        v4.port(),
+                        0 // 本地端口未知，填 0
+                    );
+                    Ok(header.into_bytes())
+                }
+                std::net::SocketAddr::V6(v6) => {
+                    let header = format!("PROXY TCP6 {} ::1 {} {}\r\n", v6.ip(), v6.port(), 0);
+                    Ok(header.into_bytes())
+                }
+            }
+        }
+        None => {
+            // 无法获取用户地址，发送 UNKNOWN
+            Ok(b"PROXY UNKNOWN\r\n".to_vec())
+        }
+    }
+}
+
+/// 构建 PROXY Protocol v2 头（二进制格式）
+///
+/// 格式:
+/// - 12 字节签名: \x0d\x0a\x0d\x0a\x00\x0d\x0a\x51\x55\x49\x54\x0a
+/// - 1 字节: 版本(4bit) + 命令(4bit)，0x21 = PROXY
+/// - 1 字节: 地址族(4bit) + 协议(4bit)，0x11 = IPv4+STREAM, 0x21 = IPv6+STREAM
+/// - 2 字节: 地址长度（大端）
+/// - 地址数据: src_ip + dst_ip + src_port + dst_port
+fn build_proxy_protocol_v2(user_addr: &Option<String>) -> anyhow::Result<Vec<u8>> {
+    const SIGNATURE: [u8; 12] = [
+        0x0d, 0x0a, 0x0d, 0x0a, 0x00, 0x0d, 0x0a, 0x51, 0x55, 0x49, 0x54, 0x0a,
+    ];
+    const CMD_PROXY: u8 = 0x21; // version 2 | PROXY command
+
+    match user_addr {
+        Some(addr_str) => {
+            let addr: std::net::SocketAddr = addr_str
+                .parse()
+                .map_err(|e| anyhow::anyhow!("解析用户地址失败 {}: {}", addr_str, e))?;
+
+            match addr {
+                std::net::SocketAddr::V4(v4) => {
+                    let af_proto: u8 = 0x11; // AF_INET | SOCK_STREAM
+                    let addr_len: u16 = 12; // 2*4 + 2*2
+                    let mut buf = Vec::with_capacity(12 + 4 + 12);
+                    buf.extend_from_slice(&SIGNATURE);
+                    buf.push(CMD_PROXY);
+                    buf.push(af_proto);
+                    buf.extend_from_slice(&addr_len.to_be_bytes());
+                    buf.extend_from_slice(&v4.ip().octets());
+                    buf.extend_from_slice(&[127, 0, 0, 1]); // dst IP: 127.0.0.1
+                    buf.extend_from_slice(&v4.port().to_be_bytes());
+                    buf.extend_from_slice(&0u16.to_be_bytes()); // dst port
+                    Ok(buf)
+                }
+                std::net::SocketAddr::V6(v6) => {
+                    let af_proto: u8 = 0x21; // AF_INET6 | SOCK_STREAM
+                    let addr_len: u16 = 36; // 2*16 + 2*2
+                    let mut buf = Vec::with_capacity(12 + 4 + 36);
+                    buf.extend_from_slice(&SIGNATURE);
+                    buf.push(CMD_PROXY);
+                    buf.push(af_proto);
+                    buf.extend_from_slice(&addr_len.to_be_bytes());
+                    buf.extend_from_slice(&v6.ip().octets());
+                    buf.extend_from_slice(&[0u8; 16]); // dst IP: ::1
+                    buf.extend_from_slice(&v6.port().to_be_bytes());
+                    buf.extend_from_slice(&0u16.to_be_bytes()); // dst port
+                    Ok(buf)
+                }
+            }
+        }
+        None => {
+            // UNKNOWN: cmd = 0x20, af_proto = 0x00, addr_len = 0
+            let mut buf = Vec::with_capacity(16);
+            buf.extend_from_slice(&SIGNATURE);
+            buf.push(0x20); // version 2 | LOCAL command
+            buf.push(0x00); // AF_UNSPEC | UNSPEC
+            buf.extend_from_slice(&0u16.to_be_bytes());
+            Ok(buf)
+        }
+    }
 }
 
 /// 双向转发：本地 TCP 连接 ↔ Framed TLS 工作连接
