@@ -1,0 +1,6 @@
+workspace:
+  launch:
+    button:
+      name: CNB 启动
+      description: IDE！
+    autoOpenWebIDE: true
