@@ -93,6 +93,7 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
                                 let proxy_name = req.proxy_name.clone();
                                 let conn_id = req.conn_id;
                                 let local_addr = proxy_manager.get_local_addr(&req.proxy_name).await;
+                                let proxy_type = proxy_manager.get_proxy_type(&req.proxy_name).await;
                                 tokio::spawn(async move {
                                     let addr = match local_addr {
                                         Some(a) => a,
@@ -101,8 +102,9 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
                                             return;
                                         }
                                     };
+                                    let ptype = proxy_type.unwrap_or_else(|| "tcp".to_string());
                                     if let Err(e) = crate::proxy_worker::open_work_connection(
-                                        &cfg, &proxy_name, conn_id, &addr,
+                                        &cfg, &proxy_name, conn_id, &addr, &ptype,
                                     )
                                     .await
                                     {

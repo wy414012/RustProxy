@@ -1,11 +1,12 @@
 //! 代理管理器
 //!
-//! 管理所有代理规则：增删查改、统计流量。
+//! 管理所有代理规则：增删查改、实时带宽监控。
 //! 使用 SQLite 持久化，服务端重启后规则不丢失。
 //! 客户端每次启动从服务端拉取规则，无需本地存储。
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use rusqlite::params;
 use tokio::sync::{Mutex, RwLock};
@@ -40,8 +41,10 @@ pub struct ProxyEntry {
     pub rule: ProxyRule,
     pub status: ProxyStatus,
     pub connections: u64,
-    pub bytes_in: u64,
-    pub bytes_out: u64,
+    /// 入站实时带宽（字节/秒）
+    pub bandwidth_in: f64,
+    /// 出站实时带宽（字节/秒）
+    pub bandwidth_out: f64,
 }
 
 /// 代理管理器（SQLite 持久化 + 内存运行时状态）
@@ -58,8 +61,34 @@ pub struct ProxyManager {
 struct RuntimeState {
     status: ProxyStatus,
     connections: u64,
+    /// 字节累加器（用于带宽计算）
     bytes_in: u64,
     bytes_out: u64,
+    /// 上次采样时刻
+    last_sample_instant: Option<Instant>,
+    /// 上次采样时的字节计数
+    last_sample_bytes_in: u64,
+    last_sample_bytes_out: u64,
+    /// 当前入站带宽（字节/秒）
+    bandwidth_in: f64,
+    /// 当前出站带宽（字节/秒）
+    bandwidth_out: f64,
+}
+
+impl RuntimeState {
+    fn new() -> Self {
+        Self {
+            status: ProxyStatus::Stopped,
+            connections: 0,
+            bytes_in: 0,
+            bytes_out: 0,
+            last_sample_instant: None,
+            last_sample_bytes_in: 0,
+            last_sample_bytes_out: 0,
+            bandwidth_in: 0.0,
+            bandwidth_out: 0.0,
+        }
+    }
 }
 
 impl std::fmt::Debug for ProxyManager {
@@ -157,15 +186,7 @@ impl ProxyManager {
         // 更新内存状态
         {
             let mut inner = self.runtime.write().await;
-            inner.insert(
-                rule.name.clone(),
-                RuntimeState {
-                    status: ProxyStatus::Stopped,
-                    connections: 0,
-                    bytes_in: 0,
-                    bytes_out: 0,
-                },
-            );
+            inner.insert(rule.name.clone(), RuntimeState::new());
         }
 
         tracing::info!(
@@ -235,18 +256,13 @@ impl ProxyManager {
     pub async fn get_proxy(&self, name: &str) -> Option<ProxyEntry> {
         let rule = self.query_rule(name).await.ok()?;
         let inner = self.runtime.read().await;
-        let rt = inner.get(name).cloned().unwrap_or(RuntimeState {
-            status: ProxyStatus::Stopped,
-            connections: 0,
-            bytes_in: 0,
-            bytes_out: 0,
-        });
+        let rt = inner.get(name).cloned().unwrap_or_else(RuntimeState::new);
         Some(ProxyEntry {
             rule,
             status: rt.status,
             connections: rt.connections,
-            bytes_in: rt.bytes_in,
-            bytes_out: rt.bytes_out,
+            bandwidth_in: rt.bandwidth_in,
+            bandwidth_out: rt.bandwidth_out,
         })
     }
 
@@ -257,18 +273,13 @@ impl ProxyManager {
         rules
             .into_iter()
             .map(|rule| {
-                let rt = inner.get(&rule.name).cloned().unwrap_or(RuntimeState {
-                    status: ProxyStatus::Stopped,
-                    connections: 0,
-                    bytes_in: 0,
-                    bytes_out: 0,
-                });
+                let rt = inner.get(&rule.name).cloned().unwrap_or_else(RuntimeState::new);
                 ProxyEntry {
                     rule,
                     status: rt.status,
                     connections: rt.connections,
-                    bytes_in: rt.bytes_in,
-                    bytes_out: rt.bytes_out,
+                    bandwidth_in: rt.bandwidth_in,
+                    bandwidth_out: rt.bandwidth_out,
                 }
             })
             .collect()
@@ -281,18 +292,13 @@ impl ProxyManager {
         rules
             .into_iter()
             .map(|rule| {
-                let rt = inner.get(&rule.name).cloned().unwrap_or(RuntimeState {
-                    status: ProxyStatus::Stopped,
-                    connections: 0,
-                    bytes_in: 0,
-                    bytes_out: 0,
-                });
+                let rt = inner.get(&rule.name).cloned().unwrap_or_else(RuntimeState::new);
                 ProxyEntry {
                     rule,
                     status: rt.status,
                     connections: rt.connections,
-                    bytes_in: rt.bytes_in,
-                    bytes_out: rt.bytes_out,
+                    bandwidth_in: rt.bandwidth_in,
+                    bandwidth_out: rt.bandwidth_out,
                 }
             })
             .collect()
@@ -339,12 +345,34 @@ impl ProxyManager {
         }
     }
 
-    /// 增加流量统计
+    /// 增加流量统计（累加字节计数，用于带宽计算）
     pub async fn add_traffic(&self, name: &str, bytes_in: u64, bytes_out: u64) {
         let mut inner = self.runtime.write().await;
         if let Some(rt) = inner.get_mut(name) {
             rt.bytes_in += bytes_in;
             rt.bytes_out += bytes_out;
+        }
+    }
+
+    /// 更新所有代理的实时带宽（周期性调用，如每 2 秒）
+    ///
+    /// 原理：对比两次采样间的字节增量 / 时间间隔 = 当前带宽
+    pub async fn update_bandwidth(&self) {
+        let now = Instant::now();
+        let mut inner = self.runtime.write().await;
+        for rt in inner.values_mut() {
+            if let Some(last_instant) = rt.last_sample_instant {
+                let elapsed = now.duration_since(last_instant).as_secs_f64();
+                if elapsed > 0.0 {
+                    let delta_in = rt.bytes_in.saturating_sub(rt.last_sample_bytes_in);
+                    let delta_out = rt.bytes_out.saturating_sub(rt.last_sample_bytes_out);
+                    rt.bandwidth_in = delta_in as f64 / elapsed;
+                    rt.bandwidth_out = delta_out as f64 / elapsed;
+                }
+            }
+            rt.last_sample_instant = Some(now);
+            rt.last_sample_bytes_in = rt.bytes_in;
+            rt.last_sample_bytes_out = rt.bytes_out;
         }
     }
 
@@ -354,15 +382,7 @@ impl ProxyManager {
         let mut inner = self.runtime.write().await;
         for rule in &rules {
             if !inner.contains_key(&rule.name) {
-                inner.insert(
-                    rule.name.clone(),
-                    RuntimeState {
-                        status: ProxyStatus::Stopped,
-                        connections: 0,
-                        bytes_in: 0,
-                        bytes_out: 0,
-                    },
-                );
+                inner.insert(rule.name.clone(), RuntimeState::new());
             }
         }
         tracing::info!("从数据库加载了 {} 条代理规则", rules.len());

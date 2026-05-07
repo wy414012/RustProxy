@@ -81,6 +81,8 @@ async fn build_status_message(state: &AppState) -> String {
                 "name": p.rule.name,
                 "status": p.status.to_string(),
                 "connections": p.connections,
+                "bandwidth_in": p.bandwidth_in,
+                "bandwidth_out": p.bandwidth_out,
             })
         })
         .collect();

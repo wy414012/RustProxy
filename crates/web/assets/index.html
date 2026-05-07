@@ -260,11 +260,13 @@ async function refreshAll() {
 // ---- Stats ----
 function renderStats(status, proxies, clients) {
   const online = clients.filter(c=>c.online).length;
+  const totalBwIn = proxies.reduce((s,p)=>s+p.bandwidth_in, 0);
+  const totalBwOut = proxies.reduce((s,p)=>s+p.bandwidth_out, 0);
   document.getElementById('statsGrid').innerHTML = `
     <div class="stat-card"><div class="label">版本</div><div class="value" style="font-size:20px">v${status.version}</div></div>
     <div class="stat-card"><div class="label">在线客户端</div><div class="value online">${online}</div></div>
     <div class="stat-card"><div class="label">代理规则</div><div class="value">${status.total_proxies}</div></div>
-    <div class="stat-card"><div class="label">总连接数</div><div class="value">${proxies.reduce((s,p)=>s+p.connections,0)}</div></div>
+    <div class="stat-card"><div class="label">服务器带宽</div><div class="value" style="font-size:18px;color:var(--primary)">↑${fmtBw(totalBwOut)} ↓${fmtBw(totalBwIn)}</div></div>
   `;
 }
 
@@ -272,7 +274,7 @@ function renderStats(status, proxies, clients) {
 function renderProxies(proxies) {
   const t = document.getElementById('proxyTable');
   if (!proxies.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
-  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>本地地址</th><th>远程端口</th><th>域名</th><th>状态</th><th>连接</th><th>流量</th><th>操作</th></tr></thead>
+  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>本地地址</th><th>远程端口</th><th>域名</th><th>状态</th><th>连接</th><th>带宽</th><th>操作</th></tr></thead>
   <tbody>${proxies.map(p=>`<tr>
     <td style="color:var(--text)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
@@ -282,7 +284,7 @@ function renderProxies(proxies) {
     <td>${p.custom_domains.length?p.custom_domains.map(esc).join(', '):'-'}</td>
     <td><span class="badge badge-${p.status}">${p.status}</span></td>
     <td>${p.connections}</td>
-    <td>${fmtBytes(p.bytes_in+p.bytes_out)}</td>
+    <td style="font-size:12px">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
     <td class="actions">
       <button class="btn btn-warn btn-sm" onclick="editProxy('${esc(p.name)}')">编辑</button>
       <button class="btn btn-danger btn-sm" onclick="deleteProxy('${esc(p.name)}')">删除</button>
@@ -294,14 +296,14 @@ function renderDashProxies(proxies) {
   const t = document.getElementById('dashProxyTable');
   const top = proxies.slice(0, 5);
   if (!top.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
-  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>状态</th><th>连接</th><th>流量</th></tr></thead>
+  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>状态</th><th>连接</th><th>带宽</th></tr></thead>
   <tbody>${top.map(p=>`<tr>
     <td style="color:var(--text)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
     <td>${esc(p.client_id)}</td>
     <td><span class="badge badge-${p.status}">${p.status}</span></td>
     <td>${p.connections}</td>
-    <td>${fmtBytes(p.bytes_in+p.bytes_out)}</td>
+    <td style="font-size:12px">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
   </tr>`).join('')}</tbody>`;
 }
 
@@ -408,7 +410,7 @@ function connectWS() {
 
 // ---- Utils ----
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
-function fmtBytes(b) { if (b < 1024) return b+'B'; if (b < 1048576) return (b/1024).toFixed(1)+'KB'; return (b/1048576).toFixed(1)+'MB'; }
+function fmtBw(bps) { if (bps < 1024) return bps.toFixed(0)+'B/s'; if (bps < 1048576) return (bps/1024).toFixed(1)+'KB/s'; return (bps/1048576).toFixed(1)+'MB/s'; }
 function toast(msg, type) {
   const el = document.createElement('div');
   el.className = 'toast toast-' + type;

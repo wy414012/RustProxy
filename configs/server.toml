@@ -5,6 +5,10 @@ bind_addr = "0.0.0.0"
 bind_port = 7000
 # 客户端认证 Token，客户端必须携带相同 Token 才能连接
 token = "your-secret-token"
+# HTTP 代理监听端口（0 = 不监听，多个 HTTP 代理规则共用此端口，基于域名路由）
+http_port = 8080
+# HTTPS 代理监听端口（0 = 不监听，多个 HTTPS 代理规则共用此端口，基于 SNI 域名路由）
+https_port = 8443
 
 [web]
 enable = true

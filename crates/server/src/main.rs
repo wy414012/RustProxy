@@ -69,8 +69,65 @@ async fn main() -> Result<()> {
     // 初始化代理监听管理器
     let proxy_listener_mgr = proxy_listener::ProxyListenerManager::new(session_manager.clone());
 
-    // 为已有的 TCP 代理规则启动公网监听器
+    // 设置流量统计回调
+    let pm_for_traffic = app_state.proxy_manager();
+    proxy_listener_mgr
+        .set_traffic_stats_fn(Arc::new(
+            move |proxy_name: String, bytes_in: u64, bytes_out: u64| {
+                let pm = pm_for_traffic.clone();
+                let name = proxy_name.clone();
+                // 使用 tokio spawn 避免在同步回调中阻塞
+                let rt = match tokio::runtime::Handle::try_current() {
+                    Ok(h) => h,
+                    Err(_) => return,
+                };
+                rt.spawn(async move {
+                    pm.add_traffic(&name, bytes_in, bytes_out).await;
+                });
+            },
+        ))
+        .await;
+
+    // 启动带宽采样周期任务（每 2 秒采样一次，计算实时带宽）
+    let pm_for_bw = app_state.proxy_manager();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(2));
+        loop {
+            interval.tick().await;
+            pm_for_bw.update_bandwidth().await;
+        }
+    });
+
+    // 为已有的代理规则启动公网监听器
     start_existing_listeners(&app_state, &proxy_listener_mgr, &config).await;
+
+    // 启动 HTTP/HTTPS 共享监听器
+    if config.server.http_port > 0 {
+        if let Err(e) = proxy_listener_mgr
+            .start_http_listener(config.server.bind_addr.clone(), config.server.http_port)
+            .await
+        {
+            tracing::error!("启动 HTTP 代理监听失败: {}", e);
+        }
+    }
+
+    if config.server.https_port > 0 {
+        // HTTPS 使用独立的 TLS 配置（可以与隧道共享同一证书）
+        let https_tls_config = cert::build_server_tls_config(&config.tls)?;
+        if let Err(e) = proxy_listener_mgr
+            .start_https_listener(
+                config.server.bind_addr.clone(),
+                config.server.https_port,
+                https_tls_config,
+            )
+            .await
+        {
+            tracing::error!("启动 HTTPS 代理监听失败: {}", e);
+        }
+    }
+
+    // 为已有的 HTTP/HTTPS 代理规则注册域名路由
+    register_existing_domain_routes(&app_state, &proxy_listener_mgr).await;
 
     // --- 设置回调（注意 clone 顺序，避免 move 问题） ---
 
@@ -120,7 +177,7 @@ async fn main() -> Result<()> {
                 Err(_) => return,
             };
             rt.spawn(async move {
-                mgr.stop_listener(&rule.name).await;
+                stop_proxy_listener(&mgr, &rule).await;
             });
         }))
         .await;
@@ -164,6 +221,12 @@ async fn main() -> Result<()> {
     }
 
     tracing::info!("服务端已启动，隧道端口: {}", config.server.bind_port);
+    if config.server.http_port > 0 {
+        tracing::info!("HTTP 代理端口: {}", config.server.http_port);
+    }
+    if config.server.https_port > 0 {
+        tracing::info!("HTTPS 代理端口: {}", config.server.https_port);
+    }
 
     // 等待退出信号
     tokio::signal::ctrl_c().await?;
@@ -184,7 +247,31 @@ async fn start_existing_listeners(
 ) {
     let proxies = app_state.proxy_manager().list_proxies().await;
     for entry in proxies {
+        // 更新代理状态为 running
+        app_state
+            .proxy_manager()
+            .update_status(
+                &entry.rule.name,
+                rustproxy_core::proxy_manager::ProxyStatus::Running,
+            )
+            .await;
         start_proxy_listener(listener_mgr, &entry.rule, config).await;
+    }
+}
+
+/// 为已有的 HTTP/HTTPS 代理规则注册域名路由
+async fn register_existing_domain_routes(
+    app_state: &AppState,
+    listener_mgr: &proxy_listener::ProxyListenerManager,
+) {
+    let proxies = app_state.proxy_manager().list_proxies().await;
+    for entry in proxies {
+        match entry.rule.proxy_type {
+            rustproxy_core::config::ProxyType::Http | rustproxy_core::config::ProxyType::Https => {
+                listener_mgr.register_domain_route(&entry.rule).await;
+            }
+            _ => {}
+        }
     }
 }
 
@@ -196,6 +283,10 @@ async fn start_proxy_listener(
 ) {
     match rule.proxy_type {
         rustproxy_core::config::ProxyType::Tcp => {
+            if rule.remote_port == 0 {
+                tracing::warn!("TCP 代理 {} 未指定 remote_port", rule.name);
+                return;
+            }
             if let Err(e) = listener_mgr
                 .start_tcp_listener(
                     rule.name.clone(),
@@ -209,14 +300,52 @@ async fn start_proxy_listener(
             }
         }
         rustproxy_core::config::ProxyType::Udp => {
-            tracing::info!("UDP 代理 {} 暂未实现公网监听", rule.name);
+            if rule.remote_port == 0 {
+                tracing::warn!("UDP 代理 {} 未指定 remote_port", rule.name);
+                return;
+            }
+            if let Err(e) = listener_mgr
+                .start_udp_listener(
+                    rule.name.clone(),
+                    rule.remote_port,
+                    config.server.bind_addr.clone(),
+                    rule.client_id.clone(),
+                )
+                .await
+            {
+                tracing::error!("启动 UDP 代理监听 {} 失败: {}", rule.name, e);
+            }
+        }
+        rustproxy_core::config::ProxyType::Http => {
+            listener_mgr.register_domain_route(rule).await;
+            tracing::info!(
+                "HTTP 代理 {} 已注册域名路由: {:?}",
+                rule.name,
+                rule.custom_domains
+            );
+        }
+        rustproxy_core::config::ProxyType::Https => {
+            listener_mgr.register_domain_route(rule).await;
+            tracing::info!(
+                "HTTPS 代理 {} 已注册域名路由: {:?}",
+                rule.name,
+                rule.custom_domains
+            );
+        }
+    }
+}
+
+/// 停止单个代理规则的公网监听器
+async fn stop_proxy_listener(
+    listener_mgr: &proxy_listener::ProxyListenerManager,
+    rule: &rustproxy_core::config::ProxyRule,
+) {
+    match rule.proxy_type {
+        rustproxy_core::config::ProxyType::Tcp | rustproxy_core::config::ProxyType::Udp => {
+            listener_mgr.stop_listener(&rule.name).await;
         }
         rustproxy_core::config::ProxyType::Http | rustproxy_core::config::ProxyType::Https => {
-            tracing::info!(
-                "{} 代理 {} 使用虚拟主机路由，无需独立监听端口",
-                rule.proxy_type,
-                rule.name
-            );
+            listener_mgr.unregister_domain_route(rule).await;
         }
     }
 }

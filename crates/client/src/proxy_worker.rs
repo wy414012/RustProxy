@@ -7,26 +7,31 @@
 //! 2. 客户端新建 TLS 连接到服务端，发送 NewWorkConnResp 确认
 //! 3. 客户端连接本地服务
 //! 4. 双向转发：本地服务 ↔ 工作连接
+//!
+//! TCP/HTTP/HTTPS: 连接本地 TCP 服务
+//! UDP: 连接本地 UDP 服务
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
 use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
+use tokio::net::UdpSocket;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_util::codec::Framed;
 
 use rustproxy_core::config::ClientConfig;
 use rustproxy_proto::frame::FrameCodec;
-use rustproxy_proto::message::{DataMessage, Message, ServerAssignProxyRequest};
+use rustproxy_proto::message::{ControlMessage, DataMessage, Message, ServerAssignProxyRequest};
 
 /// 代理工作管理器
 #[derive(Debug, Clone)]
 pub struct ProxyWorkerManager {
     /// 代理名称 -> 本地地址映射
     local_addrs: Arc<RwLock<HashMap<String, String>>>,
+    /// 代理名称 -> 代理类型
+    proxy_types: Arc<RwLock<HashMap<String, String>>>,
     /// 代理名称 -> 工作任务句柄
     tasks: Arc<RwLock<HashMap<String, JoinHandle<()>>>>,
 }
@@ -35,11 +40,12 @@ impl ProxyWorkerManager {
     pub fn new() -> Self {
         Self {
             local_addrs: Arc::new(RwLock::new(HashMap::new())),
+            proxy_types: Arc::new(RwLock::new(HashMap::new())),
             tasks: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// 启动代理工作进程（注册本地地址）
+    /// 启动代理工作进程（注册本地地址和类型）
     pub async fn start_proxy(
         &self,
         req: ServerAssignProxyRequest,
@@ -47,10 +53,14 @@ impl ProxyWorkerManager {
     ) -> anyhow::Result<()> {
         let local_addr = format!("{}:{}", req.local_ip, req.local_port);
 
-        // 注册本地地址映射
+        // 注册本地地址映射和类型
         {
             let mut addrs = self.local_addrs.write().await;
             addrs.insert(req.name.clone(), local_addr.clone());
+        }
+        {
+            let mut types = self.proxy_types.write().await;
+            types.insert(req.name.clone(), req.proxy_type.clone());
         }
 
         tracing::info!(
@@ -66,6 +76,8 @@ impl ProxyWorkerManager {
     pub async fn stop_proxy(&self, name: &str) {
         let mut addrs = self.local_addrs.write().await;
         addrs.remove(name);
+        let mut types = self.proxy_types.write().await;
+        types.remove(name);
 
         let mut tasks = self.tasks.write().await;
         if let Some(handle) = tasks.remove(name) {
@@ -78,6 +90,8 @@ impl ProxyWorkerManager {
     pub async fn stop_all(&self) {
         let mut addrs = self.local_addrs.write().await;
         addrs.clear();
+        let mut types = self.proxy_types.write().await;
+        types.clear();
 
         let mut tasks = self.tasks.write().await;
         for (name, handle) in tasks.drain() {
@@ -91,6 +105,12 @@ impl ProxyWorkerManager {
         let addrs = self.local_addrs.read().await;
         addrs.get(name).cloned()
     }
+
+    /// 获取代理规则的类型
+    pub async fn get_proxy_type(&self, name: &str) -> Option<String> {
+        let types = self.proxy_types.read().await;
+        types.get(name).cloned()
+    }
 }
 
 impl Default for ProxyWorkerManager {
@@ -101,22 +121,22 @@ impl Default for ProxyWorkerManager {
 
 /// 打开工作连接（收到 NewWorkConn 后调用）
 ///
-/// 工作连接流程：
-/// 1. 客户端新建 TLS 连接到服务端
-/// 2. 发送 NewWorkConnResp 确认
-/// 3. 连接到本地服务
-/// 4. 双向转发数据
+/// 根据代理类型选择不同的本地连接方式：
+/// - TCP/HTTP/HTTPS: 连接本地 TCP 服务，双向转发
+/// - UDP: 连接本地 UDP 服务，双向转发
 pub async fn open_work_connection(
     config: &ClientConfig,
     proxy_name: &str,
     conn_id: u64,
     local_addr: &str,
+    proxy_type: &str,
 ) -> anyhow::Result<()> {
     tracing::info!(
-        "建立工作连接: proxy={}, conn_id={}, local={}",
+        "建立工作连接: proxy={}, conn_id={}, local={}, type={}",
         proxy_name,
         conn_id,
-        local_addr
+        local_addr,
+        proxy_type
     );
 
     // 1. 建立新的 TLS 连接到服务端
@@ -124,7 +144,7 @@ pub async fn open_work_connection(
         "{}:{}",
         config.client.server_addr, config.client.server_port
     );
-    let tcp_stream = TcpStream::connect(&addr).await?;
+    let tcp_stream = tokio::net::TcpStream::connect(&addr).await?;
 
     let tls_config = build_work_tls_config(&config.client.ca_cert)?;
     let connector = tokio_rustls::TlsConnector::from(tls_config);
@@ -146,53 +166,50 @@ pub async fn open_work_connection(
         ))
         .await?;
 
-    // 3. 连接到本地服务
-    let mut local_stream = match TcpStream::connect(local_addr).await {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::error!("连接本地服务失败 {} -> {}: {}", proxy_name, local_addr, e);
-            // 通知服务端连接失败（发送空 DataMessage）
-            let err_msg = Message::Data(DataMessage {
-                conn_id,
-                data: bytes::Bytes::new(),
-            });
-            let _ = framed.send(err_msg).await;
-            return Err(e.into());
+    // 3. 根据代理类型连接本地服务
+    match proxy_type {
+        "udp" => {
+            bridge_udp_to_framed(local_addr, framed, conn_id).await;
         }
-    };
+        _ => {
+            // TCP / HTTP / HTTPS 都走 TCP
+            let mut local_stream = match tokio::net::TcpStream::connect(local_addr).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("连接本地服务失败 {} -> {}: {}", proxy_name, local_addr, e);
+                    let err_msg = Message::Data(DataMessage {
+                        conn_id,
+                        data: bytes::Bytes::new(),
+                    });
+                    let _ = framed.send(err_msg).await;
+                    return Err(e.into());
+                }
+            };
 
-    tracing::info!(
-        "工作连接已建立: proxy={}, conn_id={}, local={}",
-        proxy_name,
-        conn_id,
-        local_addr
-    );
-
-    // 4. 双向数据转发：本地 TCP ↔ 工作 TLS (Framed)
-    bridge_local_to_framed(&mut local_stream, &mut framed, conn_id).await;
+            bridge_local_tcp_to_framed(&mut local_stream, &mut framed, conn_id).await;
+        }
+    }
 
     tracing::info!("工作连接已结束: proxy={}, conn_id={}", proxy_name, conn_id);
     Ok(())
 }
 
 /// 双向转发：本地 TCP 连接 ↔ Framed TLS 工作连接
-async fn bridge_local_to_framed(
-    local_tcp: &mut TcpStream,
-    work_framed: &mut Framed<tokio_rustls::client::TlsStream<TcpStream>, FrameCodec>,
+async fn bridge_local_tcp_to_framed(
+    local_tcp: &mut tokio::net::TcpStream,
+    work_framed: &mut Framed<tokio_rustls::client::TlsStream<tokio::net::TcpStream>, FrameCodec>,
     conn_id: u64,
 ) {
-    let mut tcp_buf = vec![0u8; 8192];
+    use tokio::io::AsyncReadExt;
+
+    let mut buf = vec![0u8; 8192];
 
     loop {
         tokio::select! {
             // 从本地 TCP 读取数据，通过 Framed 发送到服务端
-            result = local_tcp.readable() => {
-                if result.is_err() {
-                    break;
-                }
-                match local_tcp.try_read(&mut tcp_buf) {
+            result = local_tcp.read(&mut buf) => {
+                match result {
                     Ok(0) => {
-                        // 本地服务关闭连接
                         tracing::debug!("连接 {} 本地服务关闭", conn_id);
                         let _ = work_framed.send(Message::Data(DataMessage {
                             conn_id,
@@ -202,14 +219,10 @@ async fn bridge_local_to_framed(
                         break;
                     }
                     Ok(n) => {
-                        let data = bytes::Bytes::copy_from_slice(&tcp_buf[..n]);
+                        let data = bytes::Bytes::copy_from_slice(&buf[..n]);
                         if work_framed.send(Message::Data(DataMessage { conn_id, data })).await.is_err() {
-                            tracing::debug!("连接 {} 工作连接发送失败", conn_id);
                             break;
                         }
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        continue;
                     }
                     Err(_) => {
                         break;
@@ -221,7 +234,6 @@ async fn bridge_local_to_framed(
                 match result {
                     Some(Ok(Message::Data(data_msg))) => {
                         if data_msg.data.is_empty() {
-                            // 服务端关闭连接
                             tracing::debug!("连接 {} 服务端关闭", conn_id);
                             let _ = local_tcp.shutdown().await;
                             break;
@@ -230,18 +242,13 @@ async fn bridge_local_to_framed(
                             break;
                         }
                     }
-                    Some(Ok(Message::Control(ControlMessage::Pong))) => {
-                        // 忽略心跳
-                    }
-                    Some(Ok(_)) => {
-                        // 其他控制消息忽略
-                    }
+                    Some(Ok(Message::Control(ControlMessage::Pong))) => {}
+                    Some(Ok(_)) => {}
                     Some(Err(e)) => {
                         tracing::debug!("连接 {} 工作连接读取错误: {}", conn_id, e);
                         break;
                     }
                     None => {
-                        tracing::debug!("连接 {} 工作连接关闭", conn_id);
                         break;
                     }
                 }
@@ -250,7 +257,77 @@ async fn bridge_local_to_framed(
     }
 }
 
-use rustproxy_proto::message::ControlMessage;
+/// 双向转发：本地 UDP 服务 ↔ Framed TLS 工作连接
+///
+/// UDP 代理模式：
+/// - 从工作连接收到的 DataMessage → 发送到本地 UDP 服务
+/// - 从本地 UDP 服务收到回复 → 通过工作连接发送 DataMessage
+async fn bridge_udp_to_framed(
+    local_addr: &str,
+    mut work_framed: Framed<tokio_rustls::client::TlsStream<tokio::net::TcpStream>, FrameCodec>,
+    conn_id: u64,
+) {
+    // 绑定本地任意端口用于 UDP 通信
+    let local_udp = match UdpSocket::bind("0.0.0.0:0").await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("绑定本地 UDP 端口失败: {}", e);
+            return;
+        }
+    };
+
+    // 连接到本地 UDP 服务
+    if let Err(e) = local_udp.connect(local_addr).await {
+        tracing::error!("连接本地 UDP 服务失败 {}: {}", local_addr, e);
+        return;
+    }
+
+    let mut udp_buf = vec![0u8; 65535];
+
+    loop {
+        tokio::select! {
+            // 从工作连接读取数据，转发到本地 UDP 服务
+            result = work_framed.next() => {
+                match result {
+                    Some(Ok(Message::Data(data_msg))) => {
+                        if data_msg.data.is_empty() {
+                            tracing::debug!("UDP 连接 {} 服务端关闭", conn_id);
+                            break;
+                        }
+                        if let Err(e) = local_udp.send(&data_msg.data).await {
+                            tracing::debug!("UDP 连接 {} 发送到本地服务失败: {}", conn_id, e);
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Control(ControlMessage::Pong))) => {}
+                    Some(Ok(_)) => {}
+                    Some(Err(e)) => {
+                        tracing::debug!("UDP 连接 {} 工作连接读取错误: {}", conn_id, e);
+                        break;
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+            // 从本地 UDP 服务读取回复，通过工作连接发送
+            result = local_udp.recv(&mut udp_buf) => {
+                match result {
+                    Ok(n) => {
+                        let data = bytes::Bytes::copy_from_slice(&udp_buf[..n]);
+                        if work_framed.send(Message::Data(DataMessage { conn_id, data })).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("UDP 连接 {} 本地服务接收失败: {}", conn_id, e);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
 
 fn build_work_tls_config(ca_cert_path: &str) -> anyhow::Result<Arc<rustls::ClientConfig>> {
     if ca_cert_path.is_empty() {

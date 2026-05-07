@@ -67,8 +67,8 @@ struct ProxyInfo {
     custom_domains: Vec<String>,
     status: String,
     connections: u64,
-    bytes_in: u64,
-    bytes_out: u64,
+    bandwidth_in: f64,
+    bandwidth_out: f64,
 }
 
 impl From<ProxyEntry> for ProxyInfo {
@@ -83,8 +83,8 @@ impl From<ProxyEntry> for ProxyInfo {
             custom_domains: e.rule.custom_domains,
             status: e.status.to_string(),
             connections: e.connections,
-            bytes_in: e.bytes_in,
-            bytes_out: e.bytes_out,
+            bandwidth_in: e.bandwidth_in,
+            bandwidth_out: e.bandwidth_out,
         }
     }
 }

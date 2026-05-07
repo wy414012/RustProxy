@@ -15,6 +15,12 @@ pub struct ServerSection {
     pub bind_addr: String,
     pub bind_port: u16,
     pub token: String,
+    /// HTTP 代理监听端口（0 = 不监听）
+    #[serde(default)]
+    pub http_port: u16,
+    /// HTTPS 代理监听端口（0 = 不监听）
+    #[serde(default)]
+    pub https_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +124,8 @@ mod tests {
 bind_addr = "0.0.0.0"
 bind_port = 7000
 token = "test-token"
+http_port = 8080
+https_port = 8443
 
 [web]
 enable = true
@@ -133,8 +141,35 @@ key_file = ""
 "#;
         let config = parse_server_config(content).unwrap();
         assert_eq!(config.server.bind_port, 7000);
+        assert_eq!(config.server.http_port, 8080);
+        assert_eq!(config.server.https_port, 8443);
         assert_eq!(config.web.user, "admin");
         assert!(config.tls.auto_cert);
+    }
+
+    #[test]
+    fn test_parse_server_config_no_http() {
+        let content = r#"
+[server]
+bind_addr = "0.0.0.0"
+bind_port = 7000
+token = "test-token"
+
+[web]
+enable = true
+bind_addr = "0.0.0.0"
+bind_port = 7500
+user = "admin"
+password = "admin"
+
+[tls]
+auto_cert = true
+cert_file = ""
+key_file = ""
+"#;
+        let config = parse_server_config(content).unwrap();
+        assert_eq!(config.server.http_port, 0);
+        assert_eq!(config.server.https_port, 0);
     }
 
     #[test]
