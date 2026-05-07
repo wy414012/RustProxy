@@ -15,7 +15,13 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
+futures = "0.3"
+clap = { version = "4", features = ["derive"] }
+rustls-pemfile = { workspace = true }
 rustproxy-core = { workspace = true }
 rustproxy-proto = { workspace = true }

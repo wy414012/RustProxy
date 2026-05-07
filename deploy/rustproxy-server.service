@@ -1,0 +1,17 @@
+[Unit]
+Description=RustProxy Server Service
+Documentation=https://github.com/yourname/rustproxy
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+User=root
+WorkingDirectory=/home/rustproxy/Server/
+ExecStart=/home/rustproxy/Server/rustproxy-server --config /home/rustproxy/Server/server.toml --db /home/rustproxy/Server/rustproxy.db
+RestartSec=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

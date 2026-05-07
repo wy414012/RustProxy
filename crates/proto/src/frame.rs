@@ -26,13 +26,13 @@ use crate::message::{ControlMessage, DataMessage, Message};
 pub enum MessageType {
     Auth = 0x01,
     AuthResp = 0x02,
-    RegisterProxy = 0x03,
-    RegisterProxyResp = 0x04,
+    ServerAssignProxy = 0x03,
+    ServerCloseProxy = 0x04,
     NewWorkConn = 0x05,
-    Data = 0x06,
-    Ping = 0x07,
-    Pong = 0x08,
-    CloseProxy = 0x09,
+    NewWorkConnResp = 0x06,
+    Data = 0x07,
+    Ping = 0x08,
+    Pong = 0x09,
 }
 
 impl TryFrom<u8> for MessageType {
@@ -42,13 +42,13 @@ impl TryFrom<u8> for MessageType {
         match value {
             0x01 => Ok(MessageType::Auth),
             0x02 => Ok(MessageType::AuthResp),
-            0x03 => Ok(MessageType::RegisterProxy),
-            0x04 => Ok(MessageType::RegisterProxyResp),
+            0x03 => Ok(MessageType::ServerAssignProxy),
+            0x04 => Ok(MessageType::ServerCloseProxy),
             0x05 => Ok(MessageType::NewWorkConn),
-            0x06 => Ok(MessageType::Data),
-            0x07 => Ok(MessageType::Ping),
-            0x08 => Ok(MessageType::Pong),
-            0x09 => Ok(MessageType::CloseProxy),
+            0x06 => Ok(MessageType::NewWorkConnResp),
+            0x07 => Ok(MessageType::Data),
+            0x08 => Ok(MessageType::Ping),
+            0x09 => Ok(MessageType::Pong),
             _ => Err(FrameError::UnknownType(value)),
         }
     }
@@ -89,20 +89,20 @@ impl Encoder<Message> for FrameCodec {
                     ControlMessage::AuthResp(resp) => {
                         (MessageType::AuthResp, serde_json::to_vec(resp)?)
                     }
-                    ControlMessage::RegisterProxy(req) => {
-                        (MessageType::RegisterProxy, serde_json::to_vec(req)?)
+                    ControlMessage::ServerAssignProxy(req) => {
+                        (MessageType::ServerAssignProxy, serde_json::to_vec(req)?)
                     }
-                    ControlMessage::RegisterProxyResp(resp) => {
-                        (MessageType::RegisterProxyResp, serde_json::to_vec(resp)?)
+                    ControlMessage::ServerCloseProxy(req) => {
+                        (MessageType::ServerCloseProxy, serde_json::to_vec(req)?)
                     }
                     ControlMessage::NewWorkConn(req) => {
                         (MessageType::NewWorkConn, serde_json::to_vec(req)?)
                     }
+                    ControlMessage::NewWorkConnResp(resp) => {
+                        (MessageType::NewWorkConnResp, serde_json::to_vec(resp)?)
+                    }
                     ControlMessage::Ping => (MessageType::Ping, Vec::new()),
                     ControlMessage::Pong => (MessageType::Pong, Vec::new()),
-                    ControlMessage::CloseProxy(req) => {
-                        (MessageType::CloseProxy, serde_json::to_vec(req)?)
-                    }
                 };
 
                 let len = payload.len() as u32;
@@ -159,13 +159,16 @@ impl Decoder for FrameCodec {
             MessageType::AuthResp => {
                 Message::Control(ControlMessage::AuthResp(serde_json::from_slice(&payload)?))
             }
-            MessageType::RegisterProxy => Message::Control(ControlMessage::RegisterProxy(
+            MessageType::ServerAssignProxy => Message::Control(ControlMessage::ServerAssignProxy(
                 serde_json::from_slice(&payload)?,
             )),
-            MessageType::RegisterProxyResp => Message::Control(ControlMessage::RegisterProxyResp(
+            MessageType::ServerCloseProxy => Message::Control(ControlMessage::ServerCloseProxy(
                 serde_json::from_slice(&payload)?,
             )),
             MessageType::NewWorkConn => Message::Control(ControlMessage::NewWorkConn(
+                serde_json::from_slice(&payload)?,
+            )),
+            MessageType::NewWorkConnResp => Message::Control(ControlMessage::NewWorkConnResp(
                 serde_json::from_slice(&payload)?,
             )),
             MessageType::Data => {
@@ -177,9 +180,6 @@ impl Decoder for FrameCodec {
             }
             MessageType::Ping => Message::Control(ControlMessage::Ping),
             MessageType::Pong => Message::Control(ControlMessage::Pong),
-            MessageType::CloseProxy => Message::Control(ControlMessage::CloseProxy(
-                serde_json::from_slice(&payload)?,
-            )),
         };
 
         Ok(Some(msg))

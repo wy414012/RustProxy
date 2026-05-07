@@ -1,16 +1,25 @@
+# RustProxy 服务端配置
+
 [server]
 bind_addr = "0.0.0.0"
-bind_port = 7000           # 隧道监听端口
-token = "your-secret-token" # 鉴权 Token，客户端需保持一致
+bind_port = 7000
+# 客户端认证 Token，客户端必须携带相同 Token 才能连接
+token = "your-secret-token"
 
 [web]
 enable = true
 bind_addr = "0.0.0.0"
-bind_port = 7500           # Web 管理面板端口
+bind_port = 7500
 user = "admin"
 password = "admin"
 
 [tls]
-auto_cert = true           # 自动生成自签证书
-cert_file = ""             # 手动指定证书路径（留空则自动生成）
-key_file = ""
+# 自动生成自签证书（首次启动后保存到 cert_file/key_file 指定路径）
+auto_cert = true
+# 证书和密钥文件路径（auto_cert=true 时自动生成保存）
+cert_file = "certs/server.crt"
+key_file = "certs/server.key"
+
+# 数据库文件路径（默认为与配置文件同目录下的 rustproxy.db）
+# 启动时可通过 --db 参数覆盖
+# 如: rustproxy-server --db /var/lib/rustproxy/rustproxy.db

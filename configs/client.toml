@@ -1,20 +1,14 @@
+# RustProxy 客户端配置
+# 客户端无需配置代理规则，所有规则由服务端 Web 面板管理
+# 客户端每次启动自动从服务端拉取属于自己的代理规则
+
 [client]
-server_addr = "127.0.0.1"    # 服务端地址
-server_port = 7000            # 服务端隧道端口
-token = "your-secret-token"   # 鉴权 Token，需与服务端一致
-
-# TCP 代理示例：将本地 SSH 暴露到服务端 6000 端口
-[[proxy]]
-name = "ssh"
-type = "tcp"
-local_ip = "127.0.0.1"
-local_port = 22
-remote_port = 6000
-
-# HTTP 代理示例：基于域名路由到本地 Web 服务
-[[proxy]]
-name = "web"
-type = "http"
-local_ip = "127.0.0.1"
-local_port = 8080
-custom_domains = ["web.example.com"]
+# 客户端唯一标识（服务端通过此 ID 关联代理规则）
+id = "my-laptop"
+# 服务端地址
+server_addr = "127.0.0.1"
+server_port = 7000
+# 必须与服务端 token 一致
+token = "your-secret-token"
+# 服务端 CA 证书路径，留空则信任自签证书（auto_cert 模式）
+ca_cert = ""

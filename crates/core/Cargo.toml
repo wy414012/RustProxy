@@ -15,3 +15,12 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 bytes = { workspace = true }
+rustls = { workspace = true }
+rcgen = { workspace = true }
+rustls-pemfile = { workspace = true }
+pem = { workspace = true }
+rusqlite = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { workspace = true }

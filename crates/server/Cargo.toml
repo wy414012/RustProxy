@@ -21,6 +21,10 @@ tokio-rustls = { workspace = true }
 rcgen = { workspace = true }
 axum = { workspace = true }
 tower-http = { workspace = true }
+tokio-util = { workspace = true }
+bytes = { workspace = true }
+futures = "0.3"
+clap = { version = "4", features = ["derive"] }
 rustproxy-core = { workspace = true }
 rustproxy-proto = { workspace = true }
 rustproxy-web = { workspace = true }
