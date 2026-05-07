@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RustProxy 管理面板</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#242838;--border:#2e3348;--primary:#6c5ce7;--primary-hover:#7c6ff7;--success:#00b894;--danger:#e74c3c;--danger-hover:#c0392b;--warn:#fdcb6e;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--radius:8px}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+a{color:var(--primary);text-decoration:none}
+
+/* Login */
+.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px;width:380px}
+.login-card h1{text-align:center;margin-bottom:8px;font-size:22px}
+.login-card p{text-align:center;color:var(--text2);margin-bottom:28px;font-size:14px}
+
+/* Layout */
+.app{display:flex;min-height:100vh}
+.sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);padding:20px 0;flex-shrink:0}
+.sidebar .logo{padding:0 20px 20px;font-size:18px;font-weight:700;border-bottom:1px solid var(--border);margin-bottom:12px}
+.sidebar .logo span{color:var(--primary)}
+.sidebar nav a{display:flex;align-items:center;gap:10px;padding:10px 20px;color:var(--text2);font-size:14px;transition:all .2s;border-left:3px solid transparent}
+.sidebar nav a:hover{background:var(--surface2);color:var(--text)}
+.sidebar nav a.active{color:var(--primary);background:var(--surface2);border-left-color:var(--primary)}
+.main{flex:1;padding:28px 32px;overflow-y:auto}
+
+/* Form */
+.form-group{margin-bottom:18px}
+.form-group label{display:block;font-size:13px;color:var(--text2);margin-bottom:6px;font-weight:500}
+.form-group input,.form-group select{width:100%;padding:9px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px;outline:none;transition:border .2s}
+.form-group input:focus,.form-group select:focus{border-color:var(--primary)}
+.form-group select option{background:var(--surface);color:var(--text)}
+
+/* Button */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 18px;border:none;border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;transition:all .2s}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger:hover{background:var(--danger-hover)}
+.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.btn-ghost:hover{background:var(--surface2);color:var(--text)}
+.btn-sm{padding:5px 12px;font-size:12px}
+
+/* Card */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:20px}
+.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.card-header h2{font-size:16px;font-weight:600}
+
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px}
+.stat-card .label{font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
+.stat-card .value{font-size:28px;font-weight:700}
+.stat-card .value.online{color:var(--success)}
+.stat-card .value.offline{color:var(--text3)}
+
+/* Table */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:10px 12px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;font-size:11px;border-bottom:1px solid var(--border)}
+td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--text2)}
+tr:hover td{background:var(--surface2)}
+
+/* Badge */
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-online{background:rgba(0,184,148,.15);color:var(--success)}
+.badge-offline{background:rgba(100,116,139,.15);color:var(--text3)}
+.badge-tcp{background:rgba(108,92,231,.15);color:var(--primary)}
+.badge-udp{background:rgba(253,203,110,.15);color:var(--warn)}
+.badge-http{background:rgba(0,184,148,.15);color:var(--success)}
+.badge-https{background:rgba(52,152,219,.15);color:#3498db}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s}
+.modal-overlay.show{opacity:1;pointer-events:all}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px;width:480px;max-width:90vw}
+.modal h3{margin-bottom:20px;font-size:16px}
+.modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+
+/* Toast */
+.toast{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:var(--radius);font-size:13px;z-index:200;animation:slideIn .3s ease;max-width:360px}
+.toast-success{background:var(--success);color:#fff}
+.toast-error{background:var(--danger);color:#fff}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* Empty */
+.empty{text-align:center;padding:40px;color:var(--text3)}
+.empty svg{width:48px;height:48px;margin-bottom:12px;opacity:.3}
+
+/* Responsive */
+@media(max-width:768px){.sidebar{display:none}.main{padding:16px}}
+</style>
+</head>
+<body>
+
+<!-- Login Page -->
+<div id="loginPage" class="login-wrap">
+  <div class="login-card">
+    <h1>🔐 RustProxy</h1>
+    <p>内网穿透管理面板</p>
+    <div class="form-group">
+      <label>用户名</label>
+      <input type="text" id="loginUser" placeholder="admin" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label>密码</label>
+      <input type="password" id="loginPass" placeholder="••••••" autocomplete="current-password">
+    </div>
+    <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="doLogin()">登 录</button>
+    <p id="loginError" style="color:var(--danger);font-size:13px;margin-top:12px;text-align:center;display:none"></p>
+  </div>
+</div>
+
+<!-- App -->
+<div id="appPage" class="app" style="display:none">
+  <aside class="sidebar">
+    <div class="logo">Rust<span>Proxy</span></div>
+    <nav>
+      <a href="#" class="active" data-page="dashboard" onclick="navigate('dashboard',this)">📊 仪表盘</a>
+      <a href="#" data-page="proxies" onclick="navigate('proxies',this)">🔗 代理规则</a>
+      <a href="#" data-page="clients" onclick="navigate('clients',this)">💻 客户端</a>
+      <a href="#" onclick="doLogout()" style="margin-top:40px;color:var(--danger)">🚪 退出登录</a>
+    </nav>
+  </aside>
+  <div class="main">
+    <!-- Dashboard -->
+    <div id="page-dashboard">
+      <h1 style="margin-bottom:24px">仪表盘</h1>
+      <div class="stats" id="statsGrid"></div>
+      <div class="card">
+        <div class="card-header"><h2>最近代理</h2></div>
+        <div class="table-wrap"><table id="dashProxyTable"></table></div>
+      </div>
+    </div>
+    <!-- Proxies -->
+    <div id="page-proxies" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+        <h1>代理规则</h1>
+        <button class="btn btn-primary" onclick="showCreateModal()">+ 添加规则</button>
+      </div>
+      <div class="card">
+        <div class="table-wrap"><table id="proxyTable"></table></div>
+      </div>
+    </div>
+    <!-- Clients -->
+    <div id="page-clients" style="display:none">
+      <h1 style="margin-bottom:24px">客户端</h1>
+      <div class="card">
+        <div class="table-wrap"><table id="clientTable"></table></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Create Proxy Modal -->
+<div id="createModal" class="modal-overlay">
+  <div class="modal">
+    <h3>添加代理规则</h3>
+    <div class="form-group"><label>规则名称</label><input id="proxyName" placeholder="my-proxy"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group"><label>协议类型</label>
+        <select id="proxyType"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="http">HTTP</option><option value="https">HTTPS</option></select>
+      </div>
+      <div class="form-group"><label>客户端 ID</label><input id="proxyClientId" placeholder="my-laptop"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+      <div class="form-group"><label>本地 IP</label><input id="proxyLocalIp" value="127.0.0.1"></div>
+      <div class="form-group"><label>本地端口</label><input id="proxyLocalPort" type="number" placeholder="8080"></div>
+      <div class="form-group"><label>远程端口</label><input id="proxyRemotePort" type="number" placeholder="0"></div>
+    </div>
+    <div class="form-group"><label>自定义域名（HTTP/HTTPS，逗号分隔）</label><input id="proxyDomains" placeholder="api.example.com"></div>
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="hideCreateModal()">取消</button>
+      <button class="btn btn-primary" onclick="createProxy()">创建</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api';
+let token = localStorage.getItem('rp_token') || '';
+let ws = null;
+
+// ---- API ----
+async function api(method, path, body) {
+  const h = {'Content-Type': 'application/json'};
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  const r = await fetch(API + path, {method, headers: h, body: body ? JSON.stringify(body) : undefined});
+  const d = await r.json();
+  if (d.code !== 200) throw new Error(d.message);
+  return d.data;
+}
+
+// ---- Auth ----
+async function doLogin() {
+  const u = document.getElementById('loginUser').value.trim();
+  const p = document.getElementById('loginPass').value;
+  const errEl = document.getElementById('loginError');
+  if (!u || !p) { errEl.textContent='请输入用户名和密码'; errEl.style.display='block'; return; }
+  try {
+    const d = await api('POST', '/auth/login', {username: u, password: p});
+    token = d.token;
+    localStorage.setItem('rp_token', token);
+    enterApp();
+  } catch(e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+  }
+}
+function doLogout() {
+  token = '';
+  localStorage.removeItem('rp_token');
+  if (ws) { ws.close(); ws = null; }
+  document.getElementById('appPage').style.display = 'none';
+  document.getElementById('loginPage').style.display = 'flex';
+}
+async function enterApp() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('appPage').style.display = 'flex';
+  connectWS();
+  await refreshAll();
+}
+document.getElementById('loginPass').addEventListener('keydown', e => { if (e.key==='Enter') doLogin(); });
+
+// ---- Navigation ----
+function navigate(page, el) {
+  document.querySelectorAll('.sidebar nav a').forEach(a=>a.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.querySelectorAll('.main > div[id^="page-"]').forEach(d=>d.style.display='none');
+  document.getElementById('page-'+page).style.display = 'block';
+  refreshAll();
+}
+
+// ---- Data ----
+async function refreshAll() {
+  try {
+    const [status, proxies, clients] = await Promise.all([
+      api('GET', '/status'),
+      api('GET', '/proxies'),
+      api('GET', '/clients')
+    ]);
+    renderStats(status, proxies, clients);
+    renderProxies(proxies);
+    renderClients(clients);
+    renderDashProxies(proxies);
+  } catch(e) {
+    if (e.message.includes('401') || e.message.includes('Unauthorized')) doLogout();
+  }
+}
+
+// ---- Stats ----
+function renderStats(status, proxies, clients) {
+  const online = clients.filter(c=>c.online).length;
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="stat-card"><div class="label">版本</div><div class="value" style="font-size:20px">v${status.version}</div></div>
+    <div class="stat-card"><div class="label">在线客户端</div><div class="value online">${online}</div></div>
+    <div class="stat-card"><div class="label">代理规则</div><div class="value">${status.total_proxies}</div></div>
+    <div class="stat-card"><div class="label">总连接数</div><div class="value">${proxies.reduce((s,p)=>s+p.connections,0)}</div></div>
+  `;
+}
+
+// ---- Proxies ----
+function renderProxies(proxies) {
+  const t = document.getElementById('proxyTable');
+  if (!proxies.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
+  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>本地地址</th><th>远程端口</th><th>域名</th><th>连接</th><th>流量</th><th>操作</th></tr></thead>
+  <tbody>${proxies.map(p=>`<tr>
+    <td style="color:var(--text)">${esc(p.name)}</td>
+    <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
+    <td>${esc(p.client_id)}</td>
+    <td>${esc(p.local_ip)}:${p.local_port}</td>
+    <td>${p.remote_port||'-'}</td>
+    <td>${p.custom_domains.length?p.custom_domains.map(esc).join(', '):'-'}</td>
+    <td>${p.connections}</td>
+    <td>${fmtBytes(p.bytes_in+p.bytes_out)}</td>
+    <td><button class="btn btn-danger btn-sm" onclick="deleteProxy('${esc(p.name)}')">删除</button></td>
+  </tr>`).join('')}</tbody>`;
+}
+
+function renderDashProxies(proxies) {
+  const t = document.getElementById('dashProxyTable');
+  const top = proxies.slice(0, 5);
+  if (!top.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
+  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>连接</th><th>流量</th></tr></thead>
+  <tbody>${top.map(p=>`<tr>
+    <td style="color:var(--text)">${esc(p.name)}</td>
+    <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
+    <td>${esc(p.client_id)}</td>
+    <td>${p.connections}</td>
+    <td>${fmtBytes(p.bytes_in+p.bytes_out)}</td>
+  </tr>`).join('')}</tbody>`;
+}
+
+function showCreateModal() {
+  document.getElementById('createModal').classList.add('show');
+  document.getElementById('proxyName').focus();
+}
+function hideCreateModal() {
+  document.getElementById('createModal').classList.remove('show');
+}
+
+async function createProxy() {
+  const name = document.getElementById('proxyName').value.trim();
+  const type = document.getElementById('proxyType').value;
+  const clientId = document.getElementById('proxyClientId').value.trim();
+  const localIp = document.getElementById('proxyLocalIp').value.trim();
+  const localPort = parseInt(document.getElementById('proxyLocalPort').value) || 0;
+  const remotePort = parseInt(document.getElementById('proxyRemotePort').value) || 0;
+  const domains = document.getElementById('proxyDomains').value.trim().split(',').map(s=>s.trim()).filter(Boolean);
+
+  if (!name || !clientId || !localPort) { toast('请填写必填项','error'); return; }
+  try {
+    await api('POST', '/proxies', {name, type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains});
+    hideCreateModal();
+    toast('规则创建成功','success');
+    await refreshAll();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+async function deleteProxy(name) {
+  if (!confirm('确认删除规则 "'+name+'" ？')) return;
+  try {
+    await api('DELETE', '/proxies/'+encodeURIComponent(name));
+    toast('已删除','success');
+    await refreshAll();
+  } catch(e) { toast(e.message, 'error'); }
+}
+
+// ---- Clients ----
+function renderClients(clients) {
+  const t = document.getElementById('clientTable');
+  if (!clients.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
+  t.innerHTML = `<thead><tr><th>客户端 ID</th><th>状态</th></tr></thead>
+  <tbody>${clients.map(c=>`<tr>
+    <td style="color:var(--text)">${esc(c.id)}</td>
+    <td><span class="badge ${c.online?'badge-online':'badge-offline'}">${c.online?'在线':'离线'}</span></td>
+  </tr>`).join('')}</tbody>`;
+}
+
+// ---- WebSocket ----
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/api/ws?token=' + encodeURIComponent(token));
+  ws.onmessage = e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'status') refreshAll();
+    } catch(_){}
+  };
+  ws.onclose = () => { setTimeout(connectWS, 5000); };
+  ws.onerror = () => { ws.close(); };
+}
+
+// ---- Utils ----
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function fmtBytes(b) { if (b < 1024) return b+'B'; if (b < 1048576) return (b/1024).toFixed(1)+'KB'; return (b/1048576).toFixed(1)+'MB'; }
+function toast(msg, type) {
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + type;
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(()=>el.remove(), 3000);
+}
+
+// ---- Init ----
+if (token) { enterApp(); }
+</script>
+</body>
+</html>

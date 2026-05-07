@@ -9,13 +9,13 @@ use rustproxy_core::proxy_manager::ProxyEntry;
 use crate::state::AppState;
 
 /// 代理规则相关 API 路由
+///
+/// WebSocket 路由 (`/ws`) 在 `lib.rs` 中单独注册，不在此处。
 pub fn proxy_routes() -> Router<AppState> {
     Router::new()
         .route("/auth/login", axum::routing::post(login))
-        .route("/proxies", get(list_proxies))
-        .route("/proxies", axum::routing::post(create_proxy))
-        .route("/proxies/:name", get(get_proxy))
-        .route("/proxies/:name", axum::routing::delete(delete_proxy))
+        .route("/proxies", get(list_proxies).post(create_proxy))
+        .route("/proxies/{name}", get(get_proxy).delete(delete_proxy))
         .route("/clients", get(list_clients))
         .route("/status", get(server_status))
 }

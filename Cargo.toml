@@ -47,8 +47,10 @@ pem = { version = "3", features = ["std"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 # Web (server only)
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.5", features = ["cors", "fs"] }
+rust-embed = { version = "8", features = ["mime-guess"] }
+mime_guess = "2"
 
 # Internal crates
 rustproxy-core = { path = "crates/core" }
