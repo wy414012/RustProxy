@@ -28,6 +28,7 @@ struct Assets;
 
 /// 构建 Web 应用路由
 pub fn build_app(state: AppState) -> Router {
+    // API 路由 + 认证中间件
     let api_routes =
         proxy_routes()
             .route("/ws", get(ws::ws_handler))
@@ -50,16 +51,28 @@ async fn health_check() -> &'static str {
 
 /// 静态资源处理（SPA 回退）
 ///
-/// 尝试匹配嵌入的静态文件，找不到则返回 index.html（SPA 路由）。
+/// 仅对非 API 路径生效。API 路径如果未匹配路由，返回 404 JSON。
 async fn static_handler(uri: axum::http::Uri) -> impl axum::response::IntoResponse {
-    let path = uri.path().trim_start_matches('/');
+    let path = uri.path();
 
-    // 尝试精确匹配
-    if let Some(file) = Assets::get(path) {
-        return serve_file(&file, path);
+    // API 路径未匹配到任何路由，返回 404 JSON
+    if path.starts_with("/api/") {
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "application/json")],
+            r#"{"code":404,"message":"接口不存在","data":null}"#,
+        )
+            .into_response();
     }
 
-    // SPA 回退：所有非 API、非静态文件路径返回 index.html
+    let clean_path = path.trim_start_matches('/');
+
+    // 尝试精确匹配
+    if let Some(file) = Assets::get(clean_path) {
+        return serve_file(&file, clean_path);
+    }
+
+    // SPA 回退：返回 index.html
     match Assets::get("index.html") {
         Some(file) => serve_file(&file, "index.html"),
         None => (StatusCode::NOT_FOUND, "Not Found").into_response(),

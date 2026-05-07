@@ -42,6 +42,8 @@ a{color:var(--primary);text-decoration:none}
 .btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}
 .btn-ghost:hover{background:var(--surface2);color:var(--text)}
 .btn-sm{padding:5px 12px;font-size:12px}
+.btn-warn{background:var(--warn);color:#333}
+.btn-warn:hover{opacity:.85}
 
 /* Card */
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:20px}
@@ -62,6 +64,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;padding:10px 12px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;font-size:11px;border-bottom:1px solid var(--border)}
 td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--text2)}
 tr:hover td{background:var(--surface2)}
+td.actions{white-space:nowrap}
 
 /* Badge */
 .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
@@ -71,6 +74,9 @@ tr:hover td{background:var(--surface2)}
 .badge-udp{background:rgba(253,203,110,.15);color:var(--warn)}
 .badge-http{background:rgba(0,184,148,.15);color:var(--success)}
 .badge-https{background:rgba(52,152,219,.15);color:#3498db}
+.badge-running{background:rgba(0,184,148,.15);color:var(--success)}
+.badge-stopped{background:rgba(100,116,139,.15);color:var(--text3)}
+.badge-error{background:rgba(231,76,60,.15);color:var(--danger)}
 
 /* Modal */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s}
@@ -98,7 +104,7 @@ tr:hover td{background:var(--surface2)}
 <!-- Login Page -->
 <div id="loginPage" class="login-wrap">
   <div class="login-card">
-    <h1>🔐 RustProxy</h1>
+    <h1>RustProxy</h1>
     <p>内网穿透管理面板</p>
     <div class="form-group">
       <label>用户名</label>
@@ -106,7 +112,7 @@ tr:hover td{background:var(--surface2)}
     </div>
     <div class="form-group">
       <label>密码</label>
-      <input type="password" id="loginPass" placeholder="••••••" autocomplete="current-password">
+      <input type="password" id="loginPass" placeholder="password" autocomplete="current-password">
     </div>
     <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="doLogin()">登 录</button>
     <p id="loginError" style="color:var(--danger);font-size:13px;margin-top:12px;text-align:center;display:none"></p>
@@ -118,10 +124,10 @@ tr:hover td{background:var(--surface2)}
   <aside class="sidebar">
     <div class="logo">Rust<span>Proxy</span></div>
     <nav>
-      <a href="#" class="active" data-page="dashboard" onclick="navigate('dashboard',this)">📊 仪表盘</a>
-      <a href="#" data-page="proxies" onclick="navigate('proxies',this)">🔗 代理规则</a>
-      <a href="#" data-page="clients" onclick="navigate('clients',this)">💻 客户端</a>
-      <a href="#" onclick="doLogout()" style="margin-top:40px;color:var(--danger)">🚪 退出登录</a>
+      <a href="#" class="active" data-page="dashboard" onclick="navigate('dashboard',this)">仪表盘</a>
+      <a href="#" data-page="proxies" onclick="navigate('proxies',this)">代理规则</a>
+      <a href="#" data-page="clients" onclick="navigate('clients',this)">客户端</a>
+      <a href="#" onclick="doLogout()" style="margin-top:40px;color:var(--danger)">退出登录</a>
     </nav>
   </aside>
   <div class="main">
@@ -154,10 +160,10 @@ tr:hover td{background:var(--surface2)}
   </div>
 </div>
 
-<!-- Create Proxy Modal -->
-<div id="createModal" class="modal-overlay">
+<!-- Create/Edit Proxy Modal -->
+<div id="proxyModal" class="modal-overlay">
   <div class="modal">
-    <h3>添加代理规则</h3>
+    <h3 id="modalTitle">添加代理规则</h3>
     <div class="form-group"><label>规则名称</label><input id="proxyName" placeholder="my-proxy"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div class="form-group"><label>协议类型</label>
@@ -172,8 +178,8 @@ tr:hover td{background:var(--surface2)}
     </div>
     <div class="form-group"><label>自定义域名（HTTP/HTTPS，逗号分隔）</label><input id="proxyDomains" placeholder="api.example.com"></div>
     <div class="actions">
-      <button class="btn btn-ghost" onclick="hideCreateModal()">取消</button>
-      <button class="btn btn-primary" onclick="createProxy()">创建</button>
+      <button class="btn btn-ghost" onclick="hideProxyModal()">取消</button>
+      <button class="btn btn-primary" id="modalSubmitBtn" onclick="submitProxy()">创建</button>
     </div>
   </div>
 </div>
@@ -182,6 +188,7 @@ tr:hover td{background:var(--surface2)}
 const API = '/api';
 let token = localStorage.getItem('rp_token') || '';
 let ws = null;
+let editingProxy = null; // null = 创建模式, string = 编辑模式（规则名）
 
 // ---- API ----
 async function api(method, path, body) {
@@ -265,7 +272,7 @@ function renderStats(status, proxies, clients) {
 function renderProxies(proxies) {
   const t = document.getElementById('proxyTable');
   if (!proxies.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
-  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>本地地址</th><th>远程端口</th><th>域名</th><th>连接</th><th>流量</th><th>操作</th></tr></thead>
+  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>本地地址</th><th>远程端口</th><th>域名</th><th>状态</th><th>连接</th><th>流量</th><th>操作</th></tr></thead>
   <tbody>${proxies.map(p=>`<tr>
     <td style="color:var(--text)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
@@ -273,9 +280,13 @@ function renderProxies(proxies) {
     <td>${esc(p.local_ip)}:${p.local_port}</td>
     <td>${p.remote_port||'-'}</td>
     <td>${p.custom_domains.length?p.custom_domains.map(esc).join(', '):'-'}</td>
+    <td><span class="badge badge-${p.status}">${p.status}</span></td>
     <td>${p.connections}</td>
     <td>${fmtBytes(p.bytes_in+p.bytes_out)}</td>
-    <td><button class="btn btn-danger btn-sm" onclick="deleteProxy('${esc(p.name)}')">删除</button></td>
+    <td class="actions">
+      <button class="btn btn-warn btn-sm" onclick="editProxy('${esc(p.name)}')">编辑</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteProxy('${esc(p.name)}')">删除</button>
+    </td>
   </tr>`).join('')}</tbody>`;
 }
 
@@ -283,25 +294,58 @@ function renderDashProxies(proxies) {
   const t = document.getElementById('dashProxyTable');
   const top = proxies.slice(0, 5);
   if (!top.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
-  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>连接</th><th>流量</th></tr></thead>
+  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>状态</th><th>连接</th><th>流量</th></tr></thead>
   <tbody>${top.map(p=>`<tr>
     <td style="color:var(--text)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
     <td>${esc(p.client_id)}</td>
+    <td><span class="badge badge-${p.status}">${p.status}</span></td>
     <td>${p.connections}</td>
     <td>${fmtBytes(p.bytes_in+p.bytes_out)}</td>
   </tr>`).join('')}</tbody>`;
 }
 
+// ---- Modal ----
 function showCreateModal() {
-  document.getElementById('createModal').classList.add('show');
+  editingProxy = null;
+  document.getElementById('modalTitle').textContent = '添加代理规则';
+  document.getElementById('modalSubmitBtn').textContent = '创建';
+  document.getElementById('proxyName').value = '';
+  document.getElementById('proxyName').disabled = false;
+  document.getElementById('proxyType').value = 'tcp';
+  document.getElementById('proxyClientId').value = '';
+  document.getElementById('proxyLocalIp').value = '127.0.0.1';
+  document.getElementById('proxyLocalPort').value = '';
+  document.getElementById('proxyRemotePort').value = '';
+  document.getElementById('proxyDomains').value = '';
+  document.getElementById('proxyModal').classList.add('show');
   document.getElementById('proxyName').focus();
 }
-function hideCreateModal() {
-  document.getElementById('createModal').classList.remove('show');
+
+async function editProxy(name) {
+  try {
+    const p = await api('GET', '/proxies/' + encodeURIComponent(name));
+    editingProxy = name;
+    document.getElementById('modalTitle').textContent = '编辑代理规则';
+    document.getElementById('modalSubmitBtn').textContent = '保存';
+    document.getElementById('proxyName').value = p.name;
+    document.getElementById('proxyName').disabled = true;
+    document.getElementById('proxyType').value = p.proxy_type;
+    document.getElementById('proxyClientId').value = p.client_id;
+    document.getElementById('proxyLocalIp').value = p.local_ip;
+    document.getElementById('proxyLocalPort').value = p.local_port;
+    document.getElementById('proxyRemotePort').value = p.remote_port;
+    document.getElementById('proxyDomains').value = p.custom_domains.join(', ');
+    document.getElementById('proxyModal').classList.add('show');
+  } catch(e) { toast(e.message, 'error'); }
 }
 
-async function createProxy() {
+function hideProxyModal() {
+  document.getElementById('proxyModal').classList.remove('show');
+  document.getElementById('proxyName').disabled = false;
+}
+
+async function submitProxy() {
   const name = document.getElementById('proxyName').value.trim();
   const type = document.getElementById('proxyType').value;
   const clientId = document.getElementById('proxyClientId').value.trim();
@@ -311,10 +355,19 @@ async function createProxy() {
   const domains = document.getElementById('proxyDomains').value.trim().split(',').map(s=>s.trim()).filter(Boolean);
 
   if (!name || !clientId || !localPort) { toast('请填写必填项','error'); return; }
+
   try {
-    await api('POST', '/proxies', {name, type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains});
-    hideCreateModal();
-    toast('规则创建成功','success');
+    if (editingProxy) {
+      // 更新模式：只发送有变化的字段
+      const body = { type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains };
+      await api('PUT', '/proxies/' + encodeURIComponent(editingProxy), body);
+      toast('规则更新成功','success');
+    } else {
+      // 创建模式
+      await api('POST', '/proxies', {name, type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains});
+      toast('规则创建成功','success');
+    }
+    hideProxyModal();
     await refreshAll();
   } catch(e) { toast(e.message, 'error'); }
 }

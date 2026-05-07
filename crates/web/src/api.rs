@@ -15,7 +15,10 @@ pub fn proxy_routes() -> Router<AppState> {
     Router::new()
         .route("/auth/login", axum::routing::post(login))
         .route("/proxies", get(list_proxies).post(create_proxy))
-        .route("/proxies/{name}", get(get_proxy).delete(delete_proxy))
+        .route(
+            "/proxies/:name",
+            get(get_proxy).put(update_proxy).delete(delete_proxy),
+        )
         .route("/clients", get(list_clients))
         .route("/status", get(server_status))
 }
@@ -39,6 +42,14 @@ impl<T: Serialize> ApiResponse<T> {
             data: Some(data),
         })
     }
+}
+
+fn error_response<T: Serialize>(code: u16, message: String) -> Json<ApiResponse<T>> {
+    Json(ApiResponse {
+        code,
+        message,
+        data: None,
+    })
 }
 
 // ============================================================
@@ -92,6 +103,17 @@ struct CreateProxyRequest {
     custom_domains: Vec<String>,
 }
 
+#[derive(Deserialize)]
+struct UpdateProxyRequest {
+    #[serde(rename = "type")]
+    proxy_type: Option<String>,
+    client_id: Option<String>,
+    local_ip: Option<String>,
+    local_port: Option<u16>,
+    remote_port: Option<u16>,
+    custom_domains: Option<Vec<String>>,
+}
+
 #[derive(Serialize)]
 struct ClientInfo {
     id: String,
@@ -133,11 +155,7 @@ async fn login(
         let token = format!("{}-{}-{}", req.username, make_timestamp(), token_prefix);
         ApiResponse::success(LoginResponse { token })
     } else {
-        Json(ApiResponse {
-            code: 401,
-            message: "用户名或密码错误".into(),
-            data: None,
-        })
+        error_response(401, "用户名或密码错误".into())
     }
 }
 
@@ -167,11 +185,7 @@ async fn create_proxy(
         "http" => ProxyType::Http,
         "https" => ProxyType::Https,
         _ => {
-            return Json(ApiResponse {
-                code: 400,
-                message: format!("不支持的代理类型: {}", payload.proxy_type),
-                data: None,
-            })
+            return error_response(400, format!("不支持的代理类型: {}", payload.proxy_type));
         }
     };
 
@@ -187,12 +201,11 @@ async fn create_proxy(
 
     let mgr = state.proxy_manager();
     if let Err(e) = mgr.add_proxy(rule.clone()).await {
-        return Json(ApiResponse {
-            code: 400,
-            message: e,
-            data: None,
-        });
+        return error_response(400, e);
     }
+
+    // 触发代理规则创建回调（启动公网监听器）
+    state.on_proxy_create(&rule).await;
 
     // 通知客户端新的代理规则
     let assign_msg = rustproxy_proto::message::ServerAssignProxyRequest {
@@ -210,8 +223,10 @@ async fn create_proxy(
     let _ = state.notify_client(&rule.client_id, &msg_json).await;
 
     // 返回创建的代理信息
-    let entry = mgr.get_proxy(&rule.name).await.unwrap();
-    ApiResponse::success(ProxyInfo::from(entry))
+    match mgr.get_proxy(&rule.name).await {
+        Some(entry) => ApiResponse::success(ProxyInfo::from(entry)),
+        None => error_response(500, "创建成功但查询失败".into()),
+    }
 }
 
 async fn get_proxy(
@@ -220,11 +235,73 @@ async fn get_proxy(
 ) -> Json<ApiResponse<ProxyInfo>> {
     match state.proxy_manager().get_proxy(&name).await {
         Some(entry) => ApiResponse::success(ProxyInfo::from(entry)),
-        None => Json(ApiResponse {
-            code: 404,
-            message: format!("代理规则不存在: {}", name),
-            data: None,
-        }),
+        None => error_response(404, format!("代理规则不存在: {}", name)),
+    }
+}
+
+async fn update_proxy(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Json(payload): Json<UpdateProxyRequest>,
+) -> Json<ApiResponse<ProxyInfo>> {
+    let mgr = state.proxy_manager();
+
+    // 获取现有规则
+    let existing = match mgr.get_proxy(&name).await {
+        Some(e) => e.rule,
+        None => return error_response(404, format!("代理规则不存在: {}", name)),
+    };
+
+    // 合并更新
+    let updated_rule = ProxyRule {
+        name: name.clone(),
+        proxy_type: payload
+            .proxy_type
+            .as_deref()
+            .and_then(|s| match s {
+                "tcp" => Some(ProxyType::Tcp),
+                "udp" => Some(ProxyType::Udp),
+                "http" => Some(ProxyType::Http),
+                "https" => Some(ProxyType::Https),
+                _ => None,
+            })
+            .unwrap_or(existing.proxy_type),
+        client_id: payload.client_id.unwrap_or(existing.client_id),
+        local_ip: payload.local_ip.unwrap_or(existing.local_ip),
+        local_port: payload.local_port.unwrap_or(existing.local_port),
+        remote_port: payload.remote_port.unwrap_or(existing.remote_port),
+        custom_domains: payload.custom_domains.unwrap_or(existing.custom_domains),
+    };
+
+    if let Err(e) = mgr.update_proxy(&name, updated_rule.clone()).await {
+        return error_response(400, e);
+    }
+
+    // 先删除旧的公网监听器
+    state.on_proxy_delete(&updated_rule).await;
+    // 再创建新的公网监听器
+    state.on_proxy_create(&updated_rule).await;
+
+    // 通知客户端更新代理规则
+    let assign_msg = rustproxy_proto::message::ServerAssignProxyRequest {
+        name: updated_rule.name.clone(),
+        proxy_type: updated_rule.proxy_type.to_string(),
+        local_ip: updated_rule.local_ip.clone(),
+        local_port: updated_rule.local_port,
+        remote_port: updated_rule.remote_port,
+        custom_domains: updated_rule.custom_domains.clone(),
+    };
+    let msg_json = serde_json::to_string(
+        &rustproxy_proto::message::ControlMessage::ServerAssignProxy(assign_msg),
+    )
+    .unwrap_or_default();
+    let _ = state
+        .notify_client(&updated_rule.client_id, &msg_json)
+        .await;
+
+    match mgr.get_proxy(&name).await {
+        Some(entry) => ApiResponse::success(ProxyInfo::from(entry)),
+        None => error_response(500, "更新成功但查询失败".into()),
     }
 }
 
@@ -234,25 +311,18 @@ async fn delete_proxy(
 ) -> Json<ApiResponse<()>> {
     let mgr = state.proxy_manager();
 
-    // 获取规则以便通知客户端
+    // 获取规则以便通知客户端和停止监听器
     let entry = match mgr.get_proxy(&name).await {
         Some(e) => e,
-        None => {
-            return Json(ApiResponse {
-                code: 404,
-                message: format!("代理规则不存在: {}", name),
-                data: None,
-            })
-        }
+        None => return error_response(404, format!("代理规则不存在: {}", name)),
     };
 
     if let Err(e) = mgr.remove_proxy(&name).await {
-        return Json(ApiResponse {
-            code: 400,
-            message: e,
-            data: None,
-        });
+        return error_response(400, e);
     }
+
+    // 触发代理规则删除回调（停止公网监听器）
+    state.on_proxy_delete(&entry.rule).await;
 
     // 通知客户端关闭代理
     let close_msg = rustproxy_proto::message::ServerCloseProxyRequest { name: name.clone() };

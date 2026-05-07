@@ -97,53 +97,57 @@ impl Default for ClientSessionManager {
     }
 }
 
-/// 处理单个客户端连接
-pub async fn handle_client(
-    stream: TlsStream<TcpStream>,
+/// 处理已认证的客户端连接（从 tunnel.rs 分发过来，Auth 已读取）
+pub async fn handle_client_with_auth(
+    mut framed: Framed<TlsStream<TcpStream>, FrameCodec>,
+    auth_req: AuthRequest,
     config: Arc<ServerConfig>,
     app_state: AppState,
     session_manager: ClientSessionManager,
 ) {
-    let mut framed = Framed::new(stream, FrameCodec);
+    // 1. 验证 Token
+    if auth_req.token != config.server.token {
+        tracing::warn!("客户端 {} Token 验证失败", auth_req.client_id);
+        let resp = AuthResponse {
+            success: false,
+            message: "Token 验证失败".to_string(),
+            server_version: VERSION.to_string(),
+        };
+        let _ = framed
+            .send(Message::Control(ControlMessage::AuthResp(resp)))
+            .await;
+        return;
+    }
 
-    // 1. 认证阶段
-    let client_id = match wait_for_auth(&mut framed, &config).await {
-        Some(id) => id,
-        None => return,
+    let client_id = auth_req.client_id.clone();
+
+    // 2. 发送认证成功响应
+    let resp = AuthResponse {
+        success: true,
+        message: "认证成功".to_string(),
+        server_version: VERSION.to_string(),
     };
+    if framed
+        .send(Message::Control(ControlMessage::AuthResp(resp)))
+        .await
+        .is_err()
+    {
+        return;
+    }
 
-    // 2. 创建消息通道
+    tracing::info!("客户端 {} (v{}) 认证成功", client_id, auth_req.version);
+
+    // 3. 创建消息通道
     let (tx, mut rx) = mpsc::channel::<Message>(256);
 
-    // 3. 注册会话
+    // 4. 注册会话
     session_manager.register(client_id.clone(), tx).await;
-    tracing::info!("客户端 {} 认证成功", client_id);
 
     // 更新 AppState 中的客户端列表
     let clients = session_manager.connected_clients().await;
     app_state.set_connected_clients(clients).await;
 
-    // 设置通知回调
-    let sm = session_manager.clone();
-    app_state
-        .set_notify_client(Arc::new(move |cid: &str, msg_json: &str| {
-            let sm = sm.clone();
-            let cid = cid.to_string();
-            let msg_json = msg_json.to_string();
-            // 同步回调，用 try_send 避免阻塞
-            // 这里简化为直接通过 tokio spawn
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async {
-                if let Ok(msg) = serde_json::from_str::<ControlMessage>(&msg_json) {
-                    sm.send_to(&cid, Message::Control(msg)).await
-                } else {
-                    false
-                }
-            })
-        }))
-        .await;
-
-    // 4. 推送该客户端的所有代理规则
+    // 5. 推送该客户端的所有代理规则
     let proxy_manager = app_state.proxy_manager();
     let proxies = proxy_manager.list_proxies_by_client(&client_id).await;
     for entry in proxies {
@@ -162,11 +166,11 @@ pub async fn handle_client(
         tracing::debug!("推送代理规则 {} 到客户端 {}", entry.rule.name, client_id);
     }
 
-    // 5. 心跳定时器
+    // 6. 心跳定时器
     let heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(30));
     tokio::pin!(heartbeat_interval);
 
-    // 6. 进入消息循环
+    // 7. 进入消息循环
     loop {
         tokio::select! {
             // 接收客户端消息
@@ -176,6 +180,10 @@ pub async fn handle_client(
                         if framed.send(Message::Control(ControlMessage::Pong)).await.is_err() {
                             break;
                         }
+                    }
+                    Some(Ok(Message::Control(ControlMessage::Auth(_)))) => {
+                        // 忽略重复认证
+                        tracing::debug!("客户端 {} 发送重复认证消息，忽略", client_id);
                     }
                     Some(Ok(_)) => {
                         // 其他消息后续处理
@@ -202,77 +210,17 @@ pub async fn handle_client(
                     None => break,
                 }
             }
-            // 心跳超时检测（暂不实现严格超时）
+            // 心跳检测
             _ = heartbeat_interval.tick() => {
                 // 检查客户端是否长时间无心跳
             }
         }
     }
 
-    // 7. 清理
+    // 8. 清理
     session_manager.unregister(&client_id).await;
     let clients = session_manager.connected_clients().await;
     app_state.set_connected_clients(clients).await;
-}
-
-/// 等待客户端认证
-async fn wait_for_auth(
-    framed: &mut Framed<TlsStream<TcpStream>, FrameCodec>,
-    config: &ServerConfig,
-) -> Option<String> {
-    use tokio::time::{timeout, Duration};
-
-    match timeout(Duration::from_secs(10), framed.next()).await {
-        Ok(Some(Ok(Message::Control(ControlMessage::Auth(AuthRequest {
-            client_id,
-            token,
-            version,
-        }))))) => {
-            if token != config.server.token {
-                tracing::warn!("客户端 {} Token 验证失败", client_id);
-                let resp = AuthResponse {
-                    success: false,
-                    message: "Token 验证失败".to_string(),
-                    server_version: VERSION.to_string(),
-                };
-                let _ = framed
-                    .send(Message::Control(ControlMessage::AuthResp(resp)))
-                    .await;
-                return None;
-            }
-
-            let resp = AuthResponse {
-                success: true,
-                message: "认证成功".to_string(),
-                server_version: VERSION.to_string(),
-            };
-            if framed
-                .send(Message::Control(ControlMessage::AuthResp(resp)))
-                .await
-                .is_err()
-            {
-                return None;
-            }
-            tracing::info!("客户端 {} (v{}) 认证成功", client_id, version);
-            Some(client_id)
-        }
-        Ok(Some(Ok(_))) => {
-            tracing::warn!("期望认证消息，收到其他消息");
-            None
-        }
-        Ok(Some(Err(e))) => {
-            tracing::warn!("认证阶段消息解析错误: {}", e);
-            None
-        }
-        Ok(None) => {
-            tracing::warn!("客户端在认证前断开连接");
-            None
-        }
-        Err(_) => {
-            tracing::warn!("认证超时（10s）");
-            None
-        }
-    }
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");

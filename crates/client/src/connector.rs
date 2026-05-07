@@ -6,7 +6,6 @@ use std::sync::Arc;
 
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
 use tokio_rustls::client::TlsStream;
 use tokio_util::codec::Framed;
 
@@ -56,7 +55,6 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
 
     // 6. 创建代理工作管理器
     let proxy_manager = ProxyWorkerManager::new();
-    let (_work_tx, mut work_rx) = mpsc::channel::<Message>(256);
 
     // 7. 心跳定时器
     let ping_interval = tokio::time::interval(std::time::Duration::from_secs(10));
@@ -87,12 +85,27 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
                                 proxy_manager.stop_proxy(&req.name).await;
                             }
                             ControlMessage::NewWorkConn(req) => {
-                                tracing::debug!("新建工作连接: {} (conn_id={})", req.proxy_name, req.conn_id);
+                                tracing::debug!(
+                                    "新建工作连接: {} (conn_id={})",
+                                    req.proxy_name, req.conn_id
+                                );
                                 let cfg = config.clone();
                                 let proxy_name = req.proxy_name.clone();
                                 let conn_id = req.conn_id;
+                                let local_addr = proxy_manager.get_local_addr(&req.proxy_name).await;
                                 tokio::spawn(async move {
-                                    if let Err(e) = crate::proxy_worker::open_work_connection(&cfg, &proxy_name, conn_id).await {
+                                    let addr = match local_addr {
+                                        Some(a) => a,
+                                        None => {
+                                            tracing::error!("未找到代理 {} 的本地地址", proxy_name);
+                                            return;
+                                        }
+                                    };
+                                    if let Err(e) = crate::proxy_worker::open_work_connection(
+                                        &cfg, &proxy_name, conn_id, &addr,
+                                    )
+                                    .await
+                                    {
                                         tracing::error!("工作连接失败: {}", e);
                                     }
                                 });
@@ -103,7 +116,11 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
                         }
                     }
                     Some(Ok(Message::Data(data))) => {
-                        tracing::debug!("收到数据消息: conn_id={}, {} bytes", data.conn_id, data.data.len());
+                        tracing::debug!(
+                            "收到数据消息: conn_id={}, {} bytes",
+                            data.conn_id,
+                            data.data.len()
+                        );
                     }
                     Some(Err(e)) => {
                         tracing::warn!("消息解析错误: {}", e);
@@ -120,17 +137,6 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
                 if framed.send(Message::Control(ControlMessage::Ping)).await.is_err() {
                     tracing::warn!("发送心跳失败");
                     break;
-                }
-            }
-            // 发送工作连接消息（暂未使用）
-            msg = work_rx.recv() => {
-                match msg {
-                    Some(msg) => {
-                        if framed.send(msg).await.is_err() {
-                            break;
-                        }
-                    }
-                    None => break,
                 }
             }
         }
@@ -158,7 +164,7 @@ async fn wait_auth_response(
 }
 
 /// 构建客户端 TLS 配置
-fn build_client_tls_config(ca_cert_path: &str) -> anyhow::Result<Arc<rustls::ClientConfig>> {
+pub fn build_client_tls_config(ca_cert_path: &str) -> anyhow::Result<Arc<rustls::ClientConfig>> {
     if ca_cert_path.is_empty() {
         // 信任自签证书模式
         let config = rustls::ClientConfig::builder()
