@@ -132,6 +132,12 @@ $:
           image: cnbcool/changelog
           settings:
             latestChangeLogTarget: LATEST_CHANGELOG.md
+          allowFailure: true
+        - name: ensure description file
+          script: |
+            if [ ! -f LATEST_CHANGELOG.md ] || [ ! -s LATEST_CHANGELOG.md ]; then
+              echo "# $CNB_BRANCH" > LATEST_CHANGELOG.md
+            fi
         - name: create release
           type: git:release
           options:
