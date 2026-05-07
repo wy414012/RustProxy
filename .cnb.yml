@@ -1,0 +1,10 @@
+$:
+  vscode:
+    - runner:
+       tags: cnb:arch:amd64
+       cpus: 8
+      docker:
+        image: docker.cnb.cool/yamingnetwork/ide/rust:stable
+      services:
+        - vscode
+        - docker
