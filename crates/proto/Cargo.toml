@@ -1,0 +1,14 @@
+[package]
+name = "rustproxy-proto"
+description = "RustProxy communication protocol definitions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tokio-util = { workspace = true }
+rustproxy-core = { workspace = true }

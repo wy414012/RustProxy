@@ -1,0 +1,20 @@
+[client]
+server_addr = "127.0.0.1"    # 服务端地址
+server_port = 7000            # 服务端隧道端口
+token = "your-secret-token"   # 鉴权 Token，需与服务端一致
+
+# TCP 代理示例：将本地 SSH 暴露到服务端 6000 端口
+[[proxy]]
+name = "ssh"
+type = "tcp"
+local_ip = "127.0.0.1"
+local_port = 22
+remote_port = 6000
+
+# HTTP 代理示例：基于域名路由到本地 Web 服务
+[[proxy]]
+name = "web"
+type = "http"
+local_ip = "127.0.0.1"
+local_port = 8080
+custom_domains = ["web.example.com"]

@@ -8,3 +8,34 @@ $:
       services:
         - vscode
         - docker
+  push:
+    - docker:
+        # rust 1.93.0
+        image: docker.cnb.cool/yamingnetwork/ide/rust:stable
+      stages:
+        - name: check
+          script: cargo check
+        - name: test
+          script: cargo test --all
+        - name: fmt
+          script: cargo fmt --all -- --check      
+        - name: clippy
+          script: cargo clippy --all --    
+        - name: build
+          script: cargo build --release --all-features --target=x86_64-unknown-linux-musl
+    - runner:
+        tags: cnb:arch:arm64:v8
+      docker:
+        # rust 1.93.0
+        image: docker.cnb.cool/yamingnetwork/ide/rust:stable
+      stages:
+        - name: check
+          script: cargo check
+        - name: test
+          script: cargo test --all
+        - name: fmt
+          script: cargo fmt --all -- --check      
+        - name: clippy
+          script: cargo clippy --all --     
+        - name: build
+          script: cargo build --release --all-features --target=aarch64-unknown-linux-musl

@@ -1,0 +1,21 @@
+[package]
+name = "rustproxy-client"
+description = "RustProxy client binary"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rustproxy-client"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+rustproxy-core = { workspace = true }
+rustproxy-proto = { workspace = true }

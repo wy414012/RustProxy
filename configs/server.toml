@@ -1,0 +1,16 @@
+[server]
+bind_addr = "0.0.0.0"
+bind_port = 7000           # 隧道监听端口
+token = "your-secret-token" # 鉴权 Token，客户端需保持一致
+
+[web]
+enable = true
+bind_addr = "0.0.0.0"
+bind_port = 7500           # Web 管理面板端口
+user = "admin"
+password = "admin"
+
+[tls]
+auto_cert = true           # 自动生成自签证书
+cert_file = ""             # 手动指定证书路径（留空则自动生成）
+key_file = ""
