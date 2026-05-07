@@ -8,7 +8,7 @@ id = "my-laptop"
 # 服务端地址
 server_addr = "127.0.0.1"
 server_port = 7000
-# 必须与服务端 token 一致
-token = "your-secret-token"
+# 必须与服务端 token 一致（⚠️ 生产环境必须修改！）
+token = "CHANGE_ME_TO_A_RANDOM_SECRET"
 # 服务端 CA 证书路径，留空则信任自签证书（auto_cert 模式）
 ca_cert = ""

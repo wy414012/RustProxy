@@ -3,8 +3,8 @@
 [server]
 bind_addr = "0.0.0.0"
 bind_port = 7000
-# 客户端认证 Token，客户端必须携带相同 Token 才能连接
-token = "your-secret-token"
+# 客户端认证 Token，客户端必须携带相同 Token 才能连接（⚠️ 生产环境必须修改！）
+token = "CHANGE_ME_TO_A_RANDOM_SECRET"
 # HTTP 代理监听端口（0 = 不监听，多个 HTTP 代理规则共用此端口，基于域名路由）
 http_port = 8080
 # HTTPS 代理监听端口（0 = 不监听，多个 HTTPS 代理规则共用此端口，基于 SNI 域名路由）
@@ -15,7 +15,8 @@ enable = true
 bind_addr = "0.0.0.0"
 bind_port = 7500
 user = "admin"
-password = "admin"
+# ⚠️ 生产环境必须修改为强密码！
+password = "CHANGE_ME_STRONG_PASSWORD"
 
 [tls]
 # 自动生成自签证书（首次启动后保存到 cert_file/key_file 指定路径）

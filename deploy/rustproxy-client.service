@@ -1,6 +1,6 @@
 [Unit]
 Description=RustProxy Client Service
-Documentation=https://github.com/yourname/rustproxy
+Documentation=https://cnb.cool/emchaye/RustProxy
 After=network.target
 
 [Service]

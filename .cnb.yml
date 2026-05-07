@@ -55,14 +55,16 @@ $:
             cp target/x86_64-unknown-linux-musl/release/rustproxy-server dist/server/
             cp configs/server.toml dist/server/
             cp deploy/rustproxy-server.service dist/server/
-            cd dist/server && tar czf ../rustproxy-server-x86_64-musl.tar.gz rustproxy-server server.toml rustproxy-server.service
+            cp deploy/README.md dist/server/
+            cd dist/server && tar czf ../rustproxy-server-x86_64-musl.tar.gz rustproxy-server server.toml rustproxy-server.service README.md
         - name: package client x86_64
           script: |
             mkdir -p dist/client
             cp target/x86_64-unknown-linux-musl/release/rustproxy-client dist/client/
             cp configs/client.toml dist/client/
             cp deploy/rustproxy-client.service dist/client/
-            cd dist/client && tar czf ../rustproxy-client-x86_64-musl.tar.gz rustproxy-client client.toml rustproxy-client.service
+            cp deploy/README.md dist/client/
+            cd dist/client && tar czf ../rustproxy-client-x86_64-musl.tar.gz rustproxy-client client.toml rustproxy-client.service README.md
         - name: notify amd64 done
           type: cnb:resolve
           options:
@@ -93,14 +95,16 @@ $:
             cp target/aarch64-unknown-linux-musl/release/rustproxy-server dist/server/
             cp configs/server.toml dist/server/
             cp deploy/rustproxy-server.service dist/server/
-            cd dist/server && tar czf ../rustproxy-server-aarch64-musl.tar.gz rustproxy-server server.toml rustproxy-server.service
+            cp deploy/README.md dist/server/
+            cd dist/server && tar czf ../rustproxy-server-aarch64-musl.tar.gz rustproxy-server server.toml rustproxy-server.service README.md
         - name: package client aarch64
           script: |
             mkdir -p dist/client
             cp target/aarch64-unknown-linux-musl/release/rustproxy-client dist/client/
             cp configs/client.toml dist/client/
             cp deploy/rustproxy-client.service dist/client/
-            cd dist/client && tar czf ../rustproxy-client-aarch64-musl.tar.gz rustproxy-client client.toml rustproxy-client.service
+            cp deploy/README.md dist/client/
+            cd dist/client && tar czf ../rustproxy-client-aarch64-musl.tar.gz rustproxy-client client.toml rustproxy-client.service README.md
         - name: notify arm64 done
           type: cnb:resolve
           options:

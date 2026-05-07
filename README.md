@@ -97,7 +97,7 @@ rustproxy/
 
 ```bash
 # 从源码编译（需要 Rust 工具链）
-git clone https://github.com/yourname/rustproxy.git
+git clone https://cnb.cool/emchaye/RustProxy.git
 cd rustproxy
 cargo build --release
 
@@ -156,14 +156,14 @@ vim configs/client.toml
 [server]
 bind_addr = "0.0.0.0"
 bind_port = 7000           # 隧道监听端口
-token = "your-secret-token" # 鉴权 Token
+token = "CHANGE_ME_TO_A_RANDOM_SECRET" # ⚠️ 生产环境必须修改！
 
 [web]
 enable = true
 bind_addr = "0.0.0.0"
 bind_port = 7500           # Web 管理面板端口
 user = "admin"
-password = "admin123"
+password = "CHANGE_ME_STRONG_PASSWORD"
 
 [tls]
 auto_cert = true           # 自动生成自签证书
@@ -178,7 +178,7 @@ key_file = "certs/server.key"
 id = "my-server"                   # 客户端唯一标识（Web 面板创建规则时关联此 ID）
 server_addr = "your-server-ip"     # 服务端地址
 server_port = 7000                 # 服务端隧道端口
-token = "your-secret-token"        # 需与服务端一致
+token = "CHANGE_ME_TO_A_RANDOM_SECRET"  # 必须与服务端一致
 # ca_cert = ""                     # 服务端 CA 证书路径，留空则信任自签证书
 ```
 

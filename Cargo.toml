@@ -12,7 +12,9 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/yourname/rustproxy"
+description = "A lightweight intranet penetration tool built with Rust"
+repository = "https://cnb.cool/emchaye/RustProxy"
+authors = ["RustProxy Contributors"]
 rust-version = "1.75"
 
 [workspace.dependencies]
