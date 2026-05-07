@@ -167,16 +167,15 @@ td.actions{white-space:nowrap}
     <div class="form-group"><label>规则名称</label><input id="proxyName" placeholder="my-proxy"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div class="form-group"><label>协议类型</label>
-        <select id="proxyType"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="http">HTTP</option><option value="https">HTTPS</option></select>
+        <select id="proxyType" onchange="onProxyTypeChange()"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="http">HTTP</option><option value="https">HTTPS</option></select>
       </div>
       <div class="form-group"><label>客户端 ID</label><input id="proxyClientId" placeholder="my-laptop"></div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-      <div class="form-group"><label>本地 IP</label><input id="proxyLocalIp" value="127.0.0.1"></div>
-      <div class="form-group"><label>本地端口</label><input id="proxyLocalPort" type="number" placeholder="8080"></div>
-      <div class="form-group"><label>远程端口</label><input id="proxyRemotePort" type="number" placeholder="0"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group" id="serverPortGroup"><label>服务端监听端口</label><input id="proxyRemotePort" type="number" placeholder="6000"><div style="font-size:11px;color:var(--text3);margin-top:3px">外部用户访问的服务器端口</div></div>
+      <div class="form-group" id="domainGroup" style="display:none"><label>自定义域名</label><input id="proxyDomains" placeholder="api.example.com, web.example.com"><div style="font-size:11px;color:var(--text3);margin-top:3px">基于域名路由，逗号分隔</div></div>
     </div>
-    <div class="form-group"><label>自定义域名（HTTP/HTTPS，逗号分隔）</label><input id="proxyDomains" placeholder="api.example.com"></div>
+    <div class="form-group"><label>映射客户端服务地址</label><input id="proxyLocalAddr" placeholder="8080 或 192.168.1.100:3306"><div style="font-size:11px;color:var(--text3);margin-top:3px">客户端本地服务地址，只填端口默认 127.0.0.1</div></div>
     <div class="actions">
       <button class="btn btn-ghost" onclick="hideProxyModal()">取消</button>
       <button class="btn btn-primary" id="modalSubmitBtn" onclick="submitProxy()">创建</button>
@@ -274,13 +273,16 @@ function renderStats(status, proxies, clients) {
 function renderProxies(proxies) {
   const t = document.getElementById('proxyTable');
   if (!proxies.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
-  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>本地地址</th><th>远程端口</th><th>域名</th><th>状态</th><th>连接</th><th>带宽</th><th>操作</th></tr></thead>
-  <tbody>${proxies.map(p=>`<tr>
+  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>服务端口</th><th>客户端地址</th><th>域名</th><th>状态</th><th>连接</th><th>带宽</th><th>操作</th></tr></thead>
+  <tbody>${proxies.map(p=>{
+    const isStream = (p.proxy_type==='tcp'||p.proxy_type==='udp');
+    const clientAddr = (p.local_ip&&p.local_ip!=='127.0.0.1') ? p.local_ip+':'+p.local_port : '127.0.0.1:'+p.local_port;
+    return `<tr>
     <td style="color:var(--text)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
     <td>${esc(p.client_id)}</td>
-    <td>${esc(p.local_ip)}:${p.local_port}</td>
-    <td>${p.remote_port||'-'}</td>
+    <td>${isStream?(p.remote_port||'-'):'共享'}</td>
+    <td>${esc(clientAddr)}</td>
     <td>${p.custom_domains.length?p.custom_domains.map(esc).join(', '):'-'}</td>
     <td><span class="badge badge-${p.status}">${p.status}</span></td>
     <td>${p.connections}</td>
@@ -289,22 +291,25 @@ function renderProxies(proxies) {
       <button class="btn btn-warn btn-sm" onclick="editProxy('${esc(p.name)}')">编辑</button>
       <button class="btn btn-danger btn-sm" onclick="deleteProxy('${esc(p.name)}')">删除</button>
     </td>
-  </tr>`).join('')}</tbody>`;
+  </tr>`}).join('')}</tbody>`;
 }
 
 function renderDashProxies(proxies) {
   const t = document.getElementById('dashProxyTable');
   const top = proxies.slice(0, 5);
   if (!top.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
-  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>客户端</th><th>状态</th><th>连接</th><th>带宽</th></tr></thead>
-  <tbody>${top.map(p=>`<tr>
+  t.innerHTML = `<thead><tr><th>名称</th><th>类型</th><th>映射</th><th>状态</th><th>连接</th><th>带宽</th></tr></thead>
+  <tbody>${top.map(p=>{
+    const isStream = (p.proxy_type==='tcp'||p.proxy_type==='udp');
+    const mapping = isStream ? ':'+p.remote_port+' → '+p.local_ip+':'+p.local_port : p.custom_domains.map(esc).join(', ');
+    return `<tr>
     <td style="color:var(--text)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
-    <td>${esc(p.client_id)}</td>
+    <td style="font-size:12px">${mapping}</td>
     <td><span class="badge badge-${p.status}">${p.status}</span></td>
     <td>${p.connections}</td>
     <td style="font-size:12px">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
-  </tr>`).join('')}</tbody>`;
+  </tr>`}).join('')}</tbody>`;
 }
 
 // ---- Modal ----
@@ -316,10 +321,10 @@ function showCreateModal() {
   document.getElementById('proxyName').disabled = false;
   document.getElementById('proxyType').value = 'tcp';
   document.getElementById('proxyClientId').value = '';
-  document.getElementById('proxyLocalIp').value = '127.0.0.1';
-  document.getElementById('proxyLocalPort').value = '';
   document.getElementById('proxyRemotePort').value = '';
+  document.getElementById('proxyLocalAddr').value = '';
   document.getElementById('proxyDomains').value = '';
+  onProxyTypeChange();
   document.getElementById('proxyModal').classList.add('show');
   document.getElementById('proxyName').focus();
 }
@@ -334,10 +339,12 @@ async function editProxy(name) {
     document.getElementById('proxyName').disabled = true;
     document.getElementById('proxyType').value = p.proxy_type;
     document.getElementById('proxyClientId').value = p.client_id;
-    document.getElementById('proxyLocalIp').value = p.local_ip;
-    document.getElementById('proxyLocalPort').value = p.local_port;
-    document.getElementById('proxyRemotePort').value = p.remote_port;
+    document.getElementById('proxyRemotePort').value = p.remote_port || '';
+    // 组装客户端地址
+    const addr = p.local_ip + ':' + p.local_port;
+    document.getElementById('proxyLocalAddr').value = addr;
     document.getElementById('proxyDomains').value = p.custom_domains.join(', ');
+    onProxyTypeChange();
     document.getElementById('proxyModal').classList.add('show');
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -347,16 +354,48 @@ function hideProxyModal() {
   document.getElementById('proxyName').disabled = false;
 }
 
+// 根据协议类型切换表单字段显示
+function onProxyTypeChange() {
+  const type = document.getElementById('proxyType').value;
+  const isStream = (type === 'tcp' || type === 'udp');
+  document.getElementById('serverPortGroup').style.display = isStream ? '' : 'none';
+  document.getElementById('domainGroup').style.display = isStream ? 'none' : '';
+}
+
 async function submitProxy() {
   const name = document.getElementById('proxyName').value.trim();
   const type = document.getElementById('proxyType').value;
   const clientId = document.getElementById('proxyClientId').value.trim();
-  const localIp = document.getElementById('proxyLocalIp').value.trim();
-  const localPort = parseInt(document.getElementById('proxyLocalPort').value) || 0;
   const remotePort = parseInt(document.getElementById('proxyRemotePort').value) || 0;
+  const localAddr = document.getElementById('proxyLocalAddr').value.trim();
   const domains = document.getElementById('proxyDomains').value.trim().split(',').map(s=>s.trim()).filter(Boolean);
 
-  if (!name || !clientId || !localPort) { toast('请填写必填项','error'); return; }
+  // 解析客户端服务地址
+  let localIp = '127.0.0.1';
+  let localPort = 0;
+  if (localAddr.includes(':')) {
+    // 支持 IPv6 和 IPv4
+    if (localAddr.startsWith('[')) {
+      // [::1]:port
+      const closeBracket = localAddr.indexOf(']');
+      if (closeBracket >= 0) {
+        localIp = localAddr.substring(1, closeBracket);
+        const portStr = localAddr.substring(closeBracket + 1).replace(':', '');
+        localPort = parseInt(portStr) || 0;
+      }
+    } else {
+      const lastColon = localAddr.lastIndexOf(':');
+      localIp = localAddr.substring(0, lastColon) || '127.0.0.1';
+      localPort = parseInt(localAddr.substring(lastColon + 1)) || 0;
+    }
+  } else {
+    // 只填了端口，IP 默认 127.0.0.1
+    localPort = parseInt(localAddr) || 0;
+  }
+
+  if (!name || !clientId || !localPort) { toast('请填写必填项（名称、客户端ID、端口）','error'); return; }
+  if ((type === 'tcp' || type === 'udp') && !remotePort) { toast('TCP/UDP 类型必须填写服务端监听端口','error'); return; }
+  if ((type === 'http' || type === 'https') && !domains.length) { toast('HTTP/HTTPS 类型必须填写自定义域名','error'); return; }
 
   try {
     if (editingProxy) {
