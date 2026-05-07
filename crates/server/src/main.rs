@@ -88,6 +88,30 @@ async fn main() -> Result<()> {
         ))
         .await;
 
+    // 设置连接计数回调
+    let pm_for_conn = app_state.proxy_manager();
+    proxy_listener_mgr
+        .set_conn_stats_fn(Arc::new(move |proxy_name: String, delta: i64| {
+            let pm = pm_for_conn.clone();
+            let name = proxy_name.clone();
+            let rt = match tokio::runtime::Handle::try_current() {
+                Ok(h) => h,
+                Err(_) => return,
+            };
+            rt.spawn(async move {
+                if delta > 0 {
+                    for _ in 0..delta {
+                        pm.inc_connections(&name).await;
+                    }
+                } else if delta < 0 {
+                    for _ in 0..-delta {
+                        pm.dec_connections(&name).await;
+                    }
+                }
+            });
+        }))
+        .await;
+
     // 启动带宽采样周期任务（每 2 秒采样一次，计算实时带宽）
     let pm_for_bw = app_state.proxy_manager();
     tokio::spawn(async move {

@@ -36,6 +36,9 @@ type FramedProxyConn = Framed<tokio_rustls::server::TlsStream<tokio::net::TcpStr
 /// 流量统计回调类型
 pub type TrafficStatsFn = Arc<dyn Fn(String, u64, u64) + Send + Sync>;
 
+/// 连接计数回调类型（参数：proxy_name, delta）
+pub type ConnStatsFn = Arc<dyn Fn(String, i64) + Send + Sync>;
+
 /// 代理监听管理器
 #[derive(Clone)]
 pub struct ProxyListenerManager {
@@ -51,6 +54,8 @@ pub struct ProxyListenerManager {
     pending_work_conns: Arc<RwLock<HashMap<u64, tokio::sync::oneshot::Sender<FramedProxyConn>>>>,
     /// 流量统计回调
     traffic_stats_fn: Arc<RwLock<Option<TrafficStatsFn>>>,
+    /// 连接计数回调
+    conn_stats_fn: Arc<RwLock<Option<ConnStatsFn>>>,
 }
 
 impl std::fmt::Debug for ProxyListenerManager {
@@ -69,6 +74,7 @@ impl ProxyListenerManager {
             session_manager,
             pending_work_conns: Arc::new(RwLock::new(HashMap::new())),
             traffic_stats_fn: Arc::new(RwLock::new(None)),
+            conn_stats_fn: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -78,11 +84,25 @@ impl ProxyListenerManager {
         *slot = Some(f);
     }
 
+    /// 设置连接计数回调
+    pub async fn set_conn_stats_fn(&self, f: ConnStatsFn) {
+        let mut slot = self.conn_stats_fn.write().await;
+        *slot = Some(f);
+    }
+
     /// 报告流量统计
     async fn report_traffic(&self, proxy_name: &str, bytes_in: u64, bytes_out: u64) {
         let cb = self.traffic_stats_fn.read().await.clone();
         if let Some(f) = cb {
             f(proxy_name.to_string(), bytes_in, bytes_out);
+        }
+    }
+
+    /// 报告连接数变化
+    async fn report_conn(&self, proxy_name: &str, delta: i64) {
+        let cb = self.conn_stats_fn.read().await.clone();
+        if let Some(f) = cb {
+            f(proxy_name.to_string(), delta);
         }
     }
 
@@ -303,6 +323,9 @@ impl ProxyListenerManager {
                 let sessions_clone = sessions.clone();
                 let session_senders_clone = session_senders.clone();
                 tokio::spawn(async move {
+                    // 增加 UDP 会话连接计数
+                    mgr.report_conn(&proxy_name_owned, 1).await;
+
                     udp_session_worker(
                         new_conn_id,
                         src_addr,
@@ -314,7 +337,10 @@ impl ProxyListenerManager {
                     )
                     .await;
 
-                    // 会话结束，清理
+                    // 会话结束，减少连接计数
+                    mgr.report_conn(&proxy_name_owned, -1).await;
+
+                    // 清理会话表
                     {
                         let mut ss = sessions_clone.write().await;
                         ss.remove(&src_addr);
@@ -564,7 +590,10 @@ impl ProxyListenerManager {
 
         tracing::info!("代理 {} 连接 {} 已桥接", proxy_name, conn_id);
 
-        // 6. 双向数据转发
+        // 6. 增加连接计数
+        self.report_conn(proxy_name, 1).await;
+
+        // 7. 双向数据转发
         let proxy_name_owned = proxy_name.to_string();
         let mgr = self.clone();
         tokio::spawn(async move {
@@ -578,6 +607,8 @@ impl ProxyListenerManager {
                 bytes_in,
                 bytes_out
             );
+            // 连接结束，减少连接计数
+            mgr.report_conn(&proxy_name_owned, -1).await;
         });
 
         Ok(())
