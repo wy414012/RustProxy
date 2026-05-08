@@ -70,11 +70,18 @@ vim server.toml
 token = "你的随机密钥"
 
 [web]
-# ⚠️ 必须修改！Web 面板登录密码
+# ⚠️ 必须修改！Web 面板登录密码（支持明文或 bcrypt 哈希，推荐 bcrypt）
 password = "你的强密码"
+# JWT Token 过期时间（小时），默认 24
+# token_expire_hours = 24
+# 允许访问 Web 面板的外部网站域名（一般留空即可）
+# 留空 = 只有通过面板本身地址访问才有效，其他网站无法冒用你的面板
+# 如果你的面板地址是 http://1.2.3.4:7500，那直接浏览器访问就没问题
+# 只有当你需要从其他网站（如 http://my-site.com）调用面板 API 时才需要填写
+# cors_origins = []
 ```
 
-> 其他配置项使用默认值即可，首次启动时会自动生成 TLS 自签证书。
+> 其他配置项使用默认值即可，首次启动时会自动生成 TLS 自签证书并保存到 `certs/` 目录。
 
 ### 3. 启动服务
 
@@ -187,6 +194,10 @@ server_port = 7000
 
 # 必须与服务端 token 一致
 token = "你的随机密钥"
+
+# ⚠️ 生产环境推荐：拷贝服务端证书到客户端并指定路径
+# 将服务端 certs/server.crt 复制到客户端机器，例如 certs/ca.crt
+# ca_cert = "certs/ca.crt"
 ```
 
 > 客户端不需要配置任何代理规则！所有规则由服务端 Web 面板管理，客户端认证后自动接收。
@@ -246,7 +257,9 @@ enable = true                # 是否启用 Web 面板
 bind_addr = "0.0.0.0"       # Web 面板监听地址
 bind_port = 7500             # Web 面板端口
 user = "admin"               # Web 面板用户名
-password = "CHANGE_ME"       # Web 面板密码（⚠️ 必须修改）
+password = "CHANGE_ME"       # Web 面板密码（⚠️ 必须修改，支持明文或 bcrypt 哈希）
+token_expire_hours = 24      # JWT Token 过期时间（小时）
+cors_origins = []            # 允许访问面板的外部网站（留空=只有直接访问面板地址才有效）
 
 [tls]
 auto_cert = true             # 自动生成自签证书
@@ -262,7 +275,7 @@ id = "my-laptop"             # 客户端唯一标识
 server_addr = "127.0.0.1"    # 服务端地址
 server_port = 7000           # 服务端隧道端口
 token = "CHANGE_ME"          # 与服务端一致的 Token（⚠️ 必须修改）
-ca_cert = ""                 # 服务端 CA 证书路径，留空信任自签证书
+ca_cert = ""                 # CA 证书路径（⚠️ 生产环境推荐配置，见下方说明）
 ```
 
 ### 代理类型说明
@@ -278,27 +291,68 @@ ca_cert = ""                 # 服务端 CA 证书路径，留空信任自签证
 
 ## TLS 证书
 
-### 自动模式（推荐）
+RustProxy 客户端与服务端之间的通信隧道通过 TLS 加密，需正确配置证书以确保安全。
+
+### 自动模式（开发/测试环境）
 
 默认 `auto_cert = true`，首次启动时自动生成自签证书并保存到 `certs/` 目录。后续启动复用已有证书。
 
-### 自定义证书
+此时客户端 `ca_cert` 留空，将跳过证书验证（信任一切连接）。**仅适用于开发/测试环境，存在中间人攻击风险。**
 
-将证书文件放到工作目录下，修改配置：
+### 推荐模式：拷贝服务端证书到客户端（生产环境）
+
+生产环境应将服务端生成的证书复制到客户端，启用标准 TLS 证书验证：
+
+**第一步：服务端启动后确认证书已生成**
+
+```bash
+ls /home/rustproxy/server/certs/
+# 应看到 server.crt  server.key
+```
+
+**第二步：将服务端证书安全拷贝到客户端机器**
+
+```bash
+# 在客户端机器上执行（替换为你的服务端 IP）
+mkdir -p /home/rustproxy/client/certs/
+scp root@你的服务器IP:/home/rustproxy/server/certs/server.crt /home/rustproxy/client/certs/ca.crt
+```
+
+> 只需拷贝 `.crt` 证书文件，**不要**拷贝 `.key` 私钥文件！私钥应仅保存在服务端。
+
+**第三步：客户端配置指定证书路径**
 
 ```toml
+[client]
+# ... 其他配置 ...
+ca_cert = "certs/ca.crt"     # 指向刚才拷贝的证书文件
+```
+
+配置后客户端将进行标准 TLS 验证，只有持有对应私钥的服务端才能通过握手，有效防止中间人攻击。
+
+### 使用自有 CA / 正式证书
+
+如果你有自己的 CA 或购买了正式证书：
+
+```toml
+# 服务端：使用自有证书
 [tls]
 auto_cert = false
 cert_file = "certs/your-cert.crt"
 key_file = "certs/your-key.key"
-```
 
-客户端如果使用自签证书，`ca_cert` 留空即可自动信任。如果使用自有 CA，需指定 CA 证书路径：
-
-```toml
+# 客户端：指定 CA 证书
 [client]
 ca_cert = "/path/to/ca.crt"
 ```
+
+### 证书配置对照表
+
+| 场景 | 服务端 `auto_cert` | 客户端 `ca_cert` | 安全级别 |
+|------|-------------------|-----------------|---------|
+| 开发/测试 | `true` | `""` (留空) | ⚠️ 低 — 跳过验证 |
+| 生产环境（推荐） | `true` | `"certs/ca.crt"` | ✅ 高 — 标准验证 |
+| 自有证书 | `false` | CA 证书路径 | ✅ 高 — 标准验证 |
 
 ---
 
@@ -309,7 +363,15 @@ ca_cert = "/path/to/ca.crt"
 1. 检查服务端隧道端口（默认 7000）是否开放防火墙
 2. 检查客户端 `server_addr` 是否正确
 3. 检查客户端和服务端的 `token` 是否一致
-4. 查看服务端日志：`journalctl -u rustproxy-server -f`
+4. 如果客户端配置了 `ca_cert`，确认证书文件存在且与服务端证书匹配
+5. 查看服务端日志：`journalctl -u rustproxy-server -f`
+
+### TLS 证书错误 / 握手失败？
+
+1. 如果使用自签证书且 `ca_cert = ""`，不应出现此错误（跳过验证模式）
+2. 如果配置了 `ca_cert`，确认拷贝的是服务端 `certs/server.crt` 而非 `.key` 文件
+3. 服务端重新生成证书后（删除 `certs/` 重启），客户端的 `ca.crt` 需要重新拷贝
+4. 检查证书文件权限：`ls -la certs/`
 
 ### Web 面板无法访问？
 

@@ -10,5 +10,9 @@ server_addr = "127.0.0.1"
 server_port = 7000
 # 必须与服务端 token 一致（⚠️ 生产环境必须修改！）
 token = "CHANGE_ME_TO_A_RANDOM_SECRET"
-# 服务端 CA 证书路径，留空则信任自签证书（auto_cert 模式）
+# 服务端 CA 证书路径
+#   - 留空: 跳过证书验证，适用于 auto_cert 自签证书模式（仅开发/测试环境）
+#   - 指定路径: 加载 CA 证书进行标准 TLS 验证（⚠️ 生产环境推荐）
+# 使用方式: 将服务端 certs/server.crt 复制到客户端可访问的路径，例如:
+#   ca_cert = "certs/ca.crt"
 ca_cert = ""
