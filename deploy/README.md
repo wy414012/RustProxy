@@ -72,6 +72,10 @@ token = "你的随机密钥"
 [web]
 # ⚠️ 必须修改！Web 面板登录密码（支持明文或 bcrypt 哈希，推荐 bcrypt）
 password = "你的强密码"
+# JWT 签名密钥，独立于客户端认证 Token
+# ⚠️ 生产环境建议显式设置为随机强密钥，避免与 server.token 复用
+# 留空则启动时自动生成（重启后已登录用户需重新登录）
+jwt_secret = "另一个随机密钥"
 # JWT Token 过期时间（小时），默认 24
 # token_expire_hours = 24
 # 允许访问 Web 面板的外部网站域名（一般留空即可）
@@ -262,6 +266,9 @@ user = "admin"               # Web 面板用户名
 password = "CHANGE_ME"       # Web 面板密码（⚠️ 必须修改）
                              # 支持明文或 bcrypt 哈希（推荐哈希）
                              # 生成哈希: ./rustproxy-server hash-password 你的密码
+jwt_secret = ""              # JWT 签名密钥（独立于客户端 Token）
+                             # ⚠️ 生产环境建议显式设置随机密钥
+                             # 留空则启动时自动生成（重启后已登录用户需重新登录）
 token_expire_hours = 24      # JWT Token 过期时间（小时）
 cors_origins = []            # 允许访问面板的外部网站（留空=只有直接访问面板地址才有效）
 

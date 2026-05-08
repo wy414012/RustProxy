@@ -165,6 +165,8 @@ bind_port = 7500           # Web 管理面板端口
 user = "admin"
 password = "CHANGE_ME_STRONG_PASSWORD" # ⚠️ 必须修改！支持明文或 bcrypt 哈希
                                       # 生成哈希: ./rustproxy-server hash-password 你的密码
+jwt_secret = ""            # JWT 签名密钥，独立于 server.token（⚠️ 生产环境建议显式设置随机密钥）
+                            # 留空则启动时自动生成，重启后已登录用户需重新登录
 # token_expire_hours = 24  # JWT Token 过期时间（小时），默认 24
 # cors_origins = []        # 允许访问面板的外部网站，留空=只有直接访问面板地址才有效
 
@@ -203,7 +205,8 @@ token = "CHANGE_ME_TO_A_RANDOM_SECRET"  # 必须与服务端一致
 
 - **TLS 加密隧道** — 服务端与客户端之间所有流量通过 TLS 加密传输，支持自签证书自动生成或用户指定证书
 - **Token 鉴权** — 客户端连接时需携带与服务器一致的 Token，常量时间比较防止时序攻击
-- **JWT 认证** — Web 面板使用 JWT（HS256 签名 + 过期时间）替代简单 Token，支持可配置过期时长
+- **JWT 认证** — Web 面板使用 JWT（HS256 签名 + 过期时间），签名密钥 `web.jwt_secret` 独立于客户端认证 Token，避免凭证复用风险
+- **帧大小限制** — 通信协议单帧最大 64 MiB，拒绝超大帧并断开连接，防止恶意客户端触发内存耗尽攻击
 - **密码安全** — 支持 bcrypt 哈希存储密码，登录失败限速（5 次/用户/5 分钟锁定）
 - **输入验证** — API 所有字段（名称、IP、端口、域名、协议类型）均做服务端校验
 - **CORS 防护** — 默认仅允许同源访问，可配置白名单域名
