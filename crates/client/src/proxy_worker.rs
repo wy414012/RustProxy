@@ -170,8 +170,10 @@ pub async fn open_work_connection(
 
     let tls_config = build_work_tls_config(&config.client.ca_cert)?;
     let connector = tokio_rustls::TlsConnector::from(tls_config);
-    let domain = rustls::pki_types::ServerName::try_from("localhost")
-        .map_err(|e| anyhow::anyhow!("域名解析失败: {}", e))?;
+    let domain = crate::connector::resolve_server_name(
+        &config.client.server_name,
+        &config.client.server_addr,
+    )?;
     let tls_stream = connector.connect(domain, tcp_stream).await?;
 
     // 2. 创建 Framed 并发送确认

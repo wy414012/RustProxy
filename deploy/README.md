@@ -198,6 +198,8 @@ token = "你的随机密钥"
 # ⚠️ 生产环境推荐：拷贝服务端证书到客户端并指定路径
 # 将服务端 certs/server.crt 复制到客户端机器，例如 certs/ca.crt
 # ca_cert = "certs/ca.crt"
+# 使用正式 CA 证书时，必须设置为证书绑定的域名
+# server_name = "proxy.example.com"
 ```
 
 > 客户端不需要配置任何代理规则！所有规则由服务端 Web 面板管理，客户端认证后自动接收。
@@ -257,7 +259,9 @@ enable = true                # 是否启用 Web 面板
 bind_addr = "0.0.0.0"       # Web 面板监听地址
 bind_port = 7500             # Web 面板端口
 user = "admin"               # Web 面板用户名
-password = "CHANGE_ME"       # Web 面板密码（⚠️ 必须修改，支持明文或 bcrypt 哈希）
+password = "CHANGE_ME"       # Web 面板密码（⚠️ 必须修改）
+                             # 支持明文或 bcrypt 哈希（推荐哈希）
+                             # 生成哈希: ./rustproxy-server hash-password 你的密码
 token_expire_hours = 24      # JWT Token 过期时间（小时）
 cors_origins = []            # 允许访问面板的外部网站（留空=只有直接访问面板地址才有效）
 
@@ -276,6 +280,7 @@ server_addr = "127.0.0.1"    # 服务端地址
 server_port = 7000           # 服务端隧道端口
 token = "CHANGE_ME"          # 与服务端一致的 Token（⚠️ 必须修改）
 ca_cert = ""                 # CA 证书路径（⚠️ 生产环境推荐配置，见下方说明）
+server_name = ""             # TLS SNI 域名（正式证书时必须设置为证书域名）
 ```
 
 ### 代理类型说明
@@ -330,29 +335,43 @@ ca_cert = "certs/ca.crt"     # 指向刚才拷贝的证书文件
 
 配置后客户端将进行标准 TLS 验证，只有持有对应私钥的服务端才能通过握手，有效防止中间人攻击。
 
-### 使用自有 CA / 正式证书
+### 使用自有 CA / 正式证书（降低 DPI 识别风险）
 
-如果你有自己的 CA 或购买了正式证书：
+如果你有自己的 CA 或购买了正式证书（如 Let's Encrypt），强烈推荐在生产环境使用。
+
+使用正式证书可以让 RustProxy 的 TLS 流量看起来像普通的 HTTPS 网站，大幅降低被 DPI/防火墙识别为代理工具的风险。
+
+**服务端配置：**
 
 ```toml
-# 服务端：使用自有证书
 [tls]
 auto_cert = false
-cert_file = "certs/your-cert.crt"
-key_file = "certs/your-key.key"
-
-# 客户端：指定 CA 证书
-[client]
-ca_cert = "/path/to/ca.crt"
+cert_file = "certs/server.crt"    # 放入正式证书（fullchain）
+key_file = "certs/server.key"     # 放入私钥
 ```
+
+将正式证书文件（如 Let's Encrypt 的 `fullchain.pem`）和私钥文件（`privkey.pem`）分别放到 `certs/server.crt` 和 `certs/server.key`。
+
+**客户端配置：**
+
+```toml
+[client]
+# ... 其他配置 ...
+ca_cert = "certs/ca.crt"             # 放入服务端的 CA 证书（或 fullchain）
+server_name = "proxy.example.com"     # ⚠️ 必须与证书绑定的域名一致！
+```
+
+> **关键**：使用正式证书时，客户端必须设置 `server_name` 为证书绑定的域名（如 `proxy.example.com`）。
+> 这是 TLS 握手中的 SNI（Server Name Indication），必须与证书域名匹配，否则握手会失败。
+> 自签证书模式下 `server_name` 留空即可（自动使用 `server_addr`）。
 
 ### 证书配置对照表
 
-| 场景 | 服务端 `auto_cert` | 客户端 `ca_cert` | 安全级别 |
-|------|-------------------|-----------------|---------|
-| 开发/测试 | `true` | `""` (留空) | ⚠️ 低 — 跳过验证 |
-| 生产环境（推荐） | `true` | `"certs/ca.crt"` | ✅ 高 — 标准验证 |
-| 自有证书 | `false` | CA 证书路径 | ✅ 高 — 标准验证 |
+| 场景 | 服务端 `auto_cert` | 客户端 `ca_cert` | 客户端 `server_name` | 安全级别 |
+|------|-------------------|-----------------|---------------------|---------|
+| 开发/测试 | `true` | `""` (留空) | `""` (留空) | ⚠️ 低 — 跳过验证 |
+| 生产环境（自签证书） | `true` | `"certs/ca.crt"` | `""` (留空) | ✅ 高 — 标准验证 |
+| 生产环境（正式证书） | `false` | CA 证书路径 | 证书域名 | ✅✅ 最高 — 标准验证 + 抗 DPI |
 
 ---
 

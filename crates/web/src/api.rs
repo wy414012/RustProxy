@@ -137,7 +137,7 @@ fn verify_password(provided: &str, stored: &str) -> bool {
     } else {
         // 明文密码比较（向后兼容，使用常量时间比较防止时序攻击）
         tracing::warn!(
-            "密码以明文存储，建议使用 bcrypt 哈希。可使用 'rustproxy-hash-password <密码>' 命令生成哈希后填入配置文件"
+            "密码以明文存储，建议使用 bcrypt 哈希。运行 'rustproxy-server hash-password <密码>' 生成哈希后填入配置文件"
         );
         constant_time_eq(provided.as_bytes(), stored.as_bytes())
     }

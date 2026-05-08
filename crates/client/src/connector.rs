@@ -30,10 +30,14 @@ pub async fn connect_and_run(config: &ClientConfig) -> anyhow::Result<()> {
     // 2. 建立 TLS 连接
     let tls_config = build_client_tls_config(&config.client.ca_cert)?;
     let connector = tokio_rustls::TlsConnector::from(tls_config);
-    let domain = rustls::pki_types::ServerName::try_from("localhost")
-        .map_err(|e| anyhow::anyhow!("域名解析失败: {}", e))?;
+    let domain = resolve_server_name(&config.client.server_name, &config.client.server_addr)?;
     let tls_stream = connector.connect(domain, tcp_stream).await?;
-    tracing::info!("TLS 连接已建立");
+    let sni_display = if config.client.server_name.is_empty() {
+        &config.client.server_addr
+    } else {
+        &config.client.server_name
+    };
+    tracing::info!("TLS 连接已建立 (SNI: {})", sni_display);
 
     // 3. 创建 Framed 编解码
     let mut framed = Framed::new(tls_stream, FrameCodec);
@@ -165,6 +169,22 @@ async fn wait_auth_response(
         Ok(None) => anyhow::bail!("服务端在认证前关闭连接"),
         Err(_) => anyhow::bail!("认证超时"),
     }
+}
+
+/// 解析 TLS SNI 域名
+///
+/// 优先使用 server_name 配置，留空时回退到 server_addr
+pub fn resolve_server_name(
+    server_name: &str,
+    server_addr: &str,
+) -> anyhow::Result<rustls::pki_types::ServerName<'static>> {
+    let name = if server_name.is_empty() {
+        server_addr
+    } else {
+        server_name
+    };
+    rustls::pki_types::ServerName::try_from(name.to_string())
+        .map_err(|e| anyhow::anyhow!("TLS SNI 域名解析失败 '{}': {}", name, e))
 }
 
 /// 构建客户端 TLS 配置

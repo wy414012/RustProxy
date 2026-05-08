@@ -1,34 +1,62 @@
 # RustProxy 服务端配置
 
 [server]
+# 隧道监听地址，0.0.0.0 表示接受所有网络接口的连接
 bind_addr = "0.0.0.0"
+# 隧道监听端口，客户端连接此端口建立加密隧道
 bind_port = 7000
-# 客户端认证 Token，客户端必须携带相同 Token 才能连接（⚠️ 生产环境必须修改！）
+# 客户端认证 Token，客户端必须携带相同 Token 才能连接
+# ⚠️ 生产环境必须修改为随机强密钥！否则任何人都能连接你的服务端
 token = "CHANGE_ME_TO_A_RANDOM_SECRET"
-# HTTP 代理监听端口（0 = 不监听，多个 HTTP 代理规则共用此端口，基于域名路由）
+# HTTP 代理监听端口（0 = 不监听）
+# 多个 HTTP 代理规则共用此端口，基于域名路由
 http_port = 8080
-# HTTPS 代理监听端口（0 = 不监听，多个 HTTPS 代理规则共用此端口，基于 SNI 域名路由）
+# HTTPS 代理监听端口（0 = 不监听）
+# 多个 HTTPS 代理规则共用此端口，基于 SNI 域名路由
 https_port = 8443
 
 [web]
+# 是否启用 Web 管理面板
 enable = true
+# Web 面板监听地址，0.0.0.0 表示所有网络接口可访问
 bind_addr = "0.0.0.0"
+# Web 面板端口，浏览器通过 http://你的IP:7500 访问
 bind_port = 7500
+# Web 面板登录用户名
 user = "admin"
-# ⚠️ 生产环境必须修改为强密码！支持明文或 bcrypt 哈希（推荐使用 bcrypt）
-# 可使用命令生成 bcrypt 哈希: rustproxy-hash-password <密码>
+# Web 面板登录密码
+# ⚠️ 生产环境必须修改为强密码！
+# 支持两种格式：
+#   1. 明文密码（简单但不够安全）：直接写密码，如 password = "my-secret"
+#   2. bcrypt 哈希（更安全，推荐）：用下面的命令生成哈希值，然后粘贴到这里
+#      生成命令: ./rustproxy-server hash-password 你的密码
+#      例如:     ./rustproxy-server hash-password my-secret
+#      会输出类似: $2b$12$xxxxxx...  的哈希值，把整行粘贴到下面即可
 password = "CHANGE_ME_STRONG_PASSWORD"
-# JWT Token 过期时间（小时），默认 24 小时
+# JWT Token 过期时间（小时），过期后需要重新登录
+# 默认 24 小时，可根据需要调整
 # token_expire_hours = 24
-# CORS 允许的域名列表，留空则仅允许同源访问（推荐生产环境留空）
+# 允许访问 Web 面板的外部网站域名（一般留空即可）
+#   留空 = 只有通过面板本身地址访问才有效，其他网站无法冒用你的面板
+#   如果你的面板地址是 http://1.2.3.4:7500，那直接浏览器访问就没问题
+#   只有当你需要从其他网站（如 http://my-site.com）调用面板 API 时才需要填写
 # 开发环境示例: ["http://localhost:3000"]
 # cors_origins = []
 
 [tls]
 # 自动生成自签证书（首次启动后保存到 cert_file/key_file 指定路径）
+#   - true:  自动生成自签证书，适合开发/测试，或生产环境配合客户端 ca_cert 使用
+#   - false: 使用你自己的正式证书，适合生产环境（需配置 cert_file 和 key_file）
+# 使用正式 CA 证书（如 Let's Encrypt）可以让 TLS 流量看起来像普通 HTTPS 网站，
+# 大幅降低被 DPI/防火墙识别为代理工具的风险
 auto_cert = true
-# 证书和密钥文件路径（auto_cert=true 时自动生成保存）
+# 证书文件路径
+#   - auto_cert = true 时：自动生成的证书保存到此路径
+#   - auto_cert = false 时：放入你的正式证书（如 Let's Encrypt 的 fullchain.pem）
 cert_file = "certs/server.crt"
+# 密钥文件路径
+#   - auto_cert = true 时：自动生成的密钥保存到此路径
+#   - auto_cert = false 时：放入你的私钥文件（如 Let's Encrypt 的 privkey.pem）
 key_file = "certs/server.key"
 
 # 数据库文件路径（默认为与配置文件同目录下的 rustproxy.db）

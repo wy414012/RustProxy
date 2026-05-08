@@ -27,6 +27,7 @@ tokio-util = { workspace = true }
 bytes = { workspace = true }
 futures = "0.3"
 clap = { version = "4", features = ["derive"] }
+bcrypt = { workspace = true }
 rustproxy-core = { workspace = true }
 rustproxy-proto = { workspace = true }
 rustproxy-web = { workspace = true }

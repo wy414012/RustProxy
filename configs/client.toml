@@ -16,3 +16,8 @@ token = "CHANGE_ME_TO_A_RANDOM_SECRET"
 # 使用方式: 将服务端 certs/server.crt 复制到客户端可访问的路径，例如:
 #   ca_cert = "certs/ca.crt"
 ca_cert = ""
+# TLS SNI 域名（用于证书验证时匹配服务端证书的域名）
+#   - 留空: 自动使用 server_addr 作为 SNI（适用于自签证书或 IP 连接）
+#   - 指定域名: 使用正式 CA 证书时必须设置为证书绑定的域名
+#   - 示例: server_name = "proxy.example.com"
+server_name = ""

@@ -26,6 +26,19 @@ struct Args {
     /// 数据库文件路径（默认与配置文件同目录下的 rustproxy.db）
     #[arg(long)]
     db: Option<String>,
+
+    /// 子命令
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(clap::Subcommand, Debug)]
+enum Command {
+    /// 生成密码的 bcrypt 哈希，用于配置文件中的 password 字段
+    HashPassword {
+        /// 要哈希的明文密码
+        password: String,
+    },
 }
 
 #[tokio::main]
@@ -33,6 +46,18 @@ async fn main() -> Result<()> {
     logger::init();
 
     let args = Args::parse();
+
+    // 处理子命令
+    if let Some(cmd) = args.command {
+        match cmd {
+            Command::HashPassword { password } => {
+                let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST)?;
+                println!("{}", hash);
+                return Ok(());
+            }
+        }
+    }
+
     tracing::info!("RustProxy Server v{}", VERSION);
 
     // 加载配置

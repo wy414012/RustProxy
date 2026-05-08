@@ -1226,6 +1226,7 @@ version = "0.1.3"
 dependencies = [
  "anyhow",
  "axum",
+ "bcrypt",
  "bytes",
  "clap",
  "futures",

@@ -164,6 +164,7 @@ bind_addr = "0.0.0.0"
 bind_port = 7500           # Web 管理面板端口
 user = "admin"
 password = "CHANGE_ME_STRONG_PASSWORD" # ⚠️ 必须修改！支持明文或 bcrypt 哈希
+                                      # 生成哈希: ./rustproxy-server hash-password 你的密码
 # token_expire_hours = 24  # JWT Token 过期时间（小时），默认 24
 # cors_origins = []        # 允许访问面板的外部网站，留空=只有直接访问面板地址才有效
 
@@ -182,11 +183,12 @@ server_addr = "your-server-ip"     # 服务端地址
 server_port = 7000                 # 服务端隧道端口
 token = "CHANGE_ME_TO_A_RANDOM_SECRET"  # 必须与服务端一致
 # ca_cert = "certs/ca.crt"         # ⚠️ 生产环境推荐：拷贝服务端证书启用标准 TLS 验证
+# server_name = "proxy.example.com"  # 正式 CA 证书时必须设置为证书绑定的域名
 ```
 
 > **注意**：客户端不需要配置任何代理规则！所有代理规则通过 Web 面板管理，客户端认证后自动接收。
 >
-> **生产环境 TLS 建议**：将服务端 `certs/server.crt` 拷贝到客户端并配置 `ca_cert`，启用标准 TLS 证书验证，防止中间人攻击。`ca_cert` 留空则会跳过证书验证，仅适用于开发/测试环境。
+> **生产环境 TLS 建议**：将服务端 `certs/server.crt` 拷贝到客户端并配置 `ca_cert`，启用标准 TLS 证书验证，防止中间人攻击。使用正式 CA 证书时还需配置 `server_name` 为证书域名。`ca_cert` 留空则会跳过证书验证，仅适用于开发/测试环境。
 
 ## 代理类型
 

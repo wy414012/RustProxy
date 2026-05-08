@@ -67,6 +67,11 @@ pub struct ClientSection {
     /// 服务端 CA 证书路径，留空则信任自签证书（auto_cert 模式）
     #[serde(default)]
     pub ca_cert: String,
+    /// TLS SNI 域名，用于证书验证时匹配服务端证书的域名
+    /// 留空则使用 server_addr 作为 SNI
+    /// 使用正式 CA 证书时必须设置为证书绑定的域名（如 proxy.example.com）
+    #[serde(default)]
+    pub server_name: String,
 }
 
 /// 代理规则（由服务端管理，通过 Web 面板配置，SQLite 持久化）
