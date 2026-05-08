@@ -13,13 +13,24 @@ permissions:
 jobs:
   # ──────────────────────────────────────────────
   # Lint & Test (对应 .cnb.yml push 中的 check/test/fmt/clippy)
+  # 三平台全量检查
   # ──────────────────────────────────────────────
   lint-test:
-    name: Lint & Test
-    runs-on: ubuntu-latest
+    name: Lint & Test - ${{ matrix.os-name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            os-name: Linux
+          - os: windows-latest
+            os-name: Windows
+          - os: macos-latest
+            os-name: macOS
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -29,14 +40,14 @@ jobs:
           components: rustfmt, clippy
 
       - name: Cache cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-lint-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-lint-
 
       - name: Check
         run: cargo check --all
@@ -51,23 +62,30 @@ jobs:
         run: cargo clippy --all --
 
   # ──────────────────────────────────────────────
-  # Build (对应 .cnb.yml push 中的 build，多架构交叉编译)
+  # Build (对应 .cnb.yml push 中的 build)
+  # 覆盖 Linux / Windows / macOS 全架构
   # ──────────────────────────────────────────────
   build:
     name: Build - ${{ matrix.job.name }}
     needs: lint-test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.job.os }}
     strategy:
       fail-fast: false
       matrix:
         job:
-          - { name: "amd64", target: "x86_64-unknown-linux-musl" }
-          - { name: "arm64v8", target: "aarch64-unknown-linux-musl" }
-          - { name: "armv7", target: "armv7-unknown-linux-musleabihf" }
-          - { name: "i386", target: "i686-unknown-linux-musl" }
+          # Linux (交叉编译，使用 cross)
+          - { name: "linux-amd64",  target: "x86_64-unknown-linux-musl",      os: "ubuntu-latest",   use_cross: true,  suffix: "x86_64-musl",      bin_ext: "" }
+          - { name: "linux-arm64",  target: "aarch64-unknown-linux-musl",     os: "ubuntu-latest",   use_cross: true,  suffix: "aarch64-musl",     bin_ext: "" }
+          - { name: "linux-armv7",  target: "armv7-unknown-linux-musleabihf", os: "ubuntu-latest",   use_cross: true,  suffix: "armv7-musleabihf", bin_ext: "" }
+          - { name: "linux-i386",   target: "i686-unknown-linux-musl",        os: "ubuntu-latest",   use_cross: true,  suffix: "i686-musl",        bin_ext: "" }
+          # Windows (原生构建)
+          - { name: "windows-amd64", target: "x86_64-pc-windows-msvc",       os: "windows-latest",  use_cross: false, suffix: "x86_64-windows",   bin_ext: ".exe" }
+          # macOS (原生构建)
+          - { name: "macos-amd64",  target: "x86_64-apple-darwin",            os: "macos-13",        use_cross: false, suffix: "x86_64-macos",     bin_ext: "" }
+          - { name: "macos-arm64",  target: "aarch64-apple-darwin",           os: "macos-latest",    use_cross: false, suffix: "aarch64-macos",    bin_ext: "" }
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -77,109 +95,96 @@ jobs:
           targets: ${{ matrix.job.target }}
 
       - name: Install cross
+        if: matrix.job.use_cross
         run: cargo install cross --locked
 
       - name: Build
-        run: cross build --release --all-features --target=${{ matrix.job.target }}
+        shell: bash
+        run: |
+          if [ "${{ matrix.job.use_cross }}" = "true" ]; then
+            cross build --release --all-features --target=${{ matrix.job.target }}
+          else
+            cargo build --release --all-features --target=${{ matrix.job.target }}
+          fi
 
       - name: Exec chmod
-        run: chmod -v a+x target/${{ matrix.job.target }}/release/rustproxy-server target/${{ matrix.job.target }}/release/rustproxy-client || true
+        if: runner.os != 'Windows'
+        run: chmod -v a+x target/${{ matrix.job.target }}/release/rustproxy-server${{ matrix.job.bin_ext }} target/${{ matrix.job.target }}/release/rustproxy-client${{ matrix.job.bin_ext }} || true
 
-      - name: Publish Artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload binary artifacts
+        uses: actions/upload-artifact@v6
         with:
           name: binaries-${{ matrix.job.name }}
           path: |
-            target/${{ matrix.job.target }}/release/rustproxy-server
-            target/${{ matrix.job.target }}/release/rustproxy-client
+            target/${{ matrix.job.target }}/release/rustproxy-server${{ matrix.job.bin_ext }}
+            target/${{ matrix.job.target }}/release/rustproxy-client${{ matrix.job.bin_ext }}
           if-no-files-found: warn
 
-  # ──────────────────────────────────────────────
-  # Package & Release (对应 .cnb.yml tag_push)
-  # 仅在推送 tag 或发布 release 时触发
-  # ──────────────────────────────────────────────
-  package:
-    name: Package - ${{ matrix.job.name }}
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
-    needs: lint-test
-    strategy:
-      fail-fast: false
-      matrix:
-        job:
-          - { name: "x86_64", target: "x86_64-unknown-linux-musl", suffix: "x86_64-musl" }
-          - { name: "aarch64", target: "aarch64-unknown-linux-musl", suffix: "aarch64-musl" }
-    steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.job.target }}
-
-      - name: Install cross
-        run: cargo install cross --locked
-
-      - name: Build
-        run: cross build --release --all-features --target=${{ matrix.job.target }}
+      # ─── 以下仅在 tag 推送时执行：打包发布产物 ───
 
       - name: Package server
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         run: |
           mkdir -p dist/server
-          cp target/${{ matrix.job.target }}/release/rustproxy-server dist/server/
+          cp target/${{ matrix.job.target }}/release/rustproxy-server${{ matrix.job.bin_ext }} dist/server/
           cp configs/server.toml dist/server/
-          cp deploy/rustproxy-server.service dist/server/
+          cp deploy/rustproxy-server.service dist/server/ 2>/dev/null || true
           cp deploy/README.md dist/server/
-          cd dist/server && tar czf ../rustproxy-server-${{ matrix.job.suffix }}.tar.gz rustproxy-server server.toml rustproxy-server.service README.md
+          cd dist/server && tar czf ../rustproxy-server-${{ matrix.job.suffix }}.tar.gz *
 
       - name: Package client
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         run: |
           mkdir -p dist/client
-          cp target/${{ matrix.job.target }}/release/rustproxy-client dist/client/
+          cp target/${{ matrix.job.target }}/release/rustproxy-client${{ matrix.job.bin_ext }} dist/client/
           cp configs/client.toml dist/client/
-          cp deploy/rustproxy-client.service dist/client/
+          cp deploy/rustproxy-client.service dist/client/ 2>/dev/null || true
           cp deploy/README.md dist/client/
-          cd dist/client && tar czf ../rustproxy-client-${{ matrix.job.suffix }}.tar.gz rustproxy-client client.toml rustproxy-client.service README.md
+          cd dist/client && tar czf ../rustproxy-client-${{ matrix.job.suffix }}.tar.gz *
 
-      - name: Upload server artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload server package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v6
         with:
           name: rustproxy-server-${{ matrix.job.suffix }}
           path: dist/rustproxy-server-${{ matrix.job.suffix }}.tar.gz
 
-      - name: Upload client artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload client package
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v6
         with:
           name: rustproxy-client-${{ matrix.job.suffix }}
           path: dist/rustproxy-client-${{ matrix.job.suffix }}.tar.gz
 
+  # ──────────────────────────────────────────────
+  # Release (对应 .cnb.yml tag_push 中 Pipeline 3)
+  # 等待所有架构打包完成，创建 GitHub Release
+  # ──────────────────────────────────────────────
   release:
     name: Create Release
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    needs: package
+    needs: build
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true
 
       - name: List artifacts
-        run: ls -la dist/
+        run: ls -laR dist/
 
       - name: Generate changelog
-        id: changelog
         run: |
-          # 获取上一个 tag 到当前 tag 的提交日志
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
             LOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
