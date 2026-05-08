@@ -4,6 +4,8 @@
 //! 同时包含登录速率限制状态，防止暴力破解。
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -16,11 +18,13 @@ use rustproxy_core::proxy_manager::ProxyManager;
 /// 参数: (client_id, message_json) -> 是否发送成功
 pub type NotifyClientFn = Arc<dyn Fn(String, String) -> bool + Send + Sync>;
 
-/// 代理规则创建回调
-pub type OnProxyCreateFn = Arc<dyn Fn(ProxyRule) + Send + Sync>;
+/// 代理规则创建回调（异步，可等待监听器实际启动）
+pub type OnProxyCreateFn =
+    Arc<dyn Fn(ProxyRule) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
-/// 代理规则删除回调
-pub type OnProxyDeleteFn = Arc<dyn Fn(ProxyRule) + Send + Sync>;
+/// 代理规则删除回调（异步，可等待监听器实际停止）
+pub type OnProxyDeleteFn =
+    Arc<dyn Fn(ProxyRule) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
 
 /// 登录速率限制：最大尝试次数
 const MAX_LOGIN_ATTEMPTS: u32 = 5;
@@ -128,14 +132,14 @@ impl AppState {
         *cb = Some(f);
     }
 
-    /// 触发代理规则创建回调
+    /// 触发代理规则创建回调（等待监听器实际启动完成）
     pub async fn on_proxy_create(&self, rule: &ProxyRule) {
         let callback = {
             let cb = self.inner.on_proxy_create.read().await;
             cb.clone()
         };
         if let Some(f) = callback {
-            f(rule.clone());
+            f(rule.clone()).await;
         }
     }
 
@@ -145,14 +149,14 @@ impl AppState {
         *cb = Some(f);
     }
 
-    /// 触发代理规则删除回调
+    /// 触发代理规则删除回调（等待监听器实际停止完成）
     pub async fn on_proxy_delete(&self, rule: &ProxyRule) {
         let callback = {
             let cb = self.inner.on_proxy_delete.read().await;
             cb.clone()
         };
         if let Some(f) = callback {
-            f(rule.clone());
+            f(rule.clone()).await;
         }
     }
 

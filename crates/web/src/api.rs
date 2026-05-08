@@ -353,7 +353,14 @@ async fn create_proxy(
         return error_response(400, e);
     }
 
-    // 触发代理规则创建回调（启动公网监听器）
+    // 设置代理状态为 starting，回调中会更新为 running/error
+    mgr.update_status(
+        &rule.name,
+        rustproxy_core::proxy_manager::ProxyStatus::Starting,
+    )
+    .await;
+
+    // 触发代理规则创建回调（启动公网监听器，等待完成）
     state.on_proxy_create(&rule).await;
 
     // 通知客户端新的代理规则
@@ -441,7 +448,7 @@ async fn update_proxy(
         None => return error_response(404, format!("代理规则不存在: {}", name)),
     };
 
-    // 合并更新
+    // 合并更新（先 clone existing，因为后续 on_proxy_delete 还需要使用原始规则）
     let updated_rule = ProxyRule {
         name: name.clone(),
         proxy_type: payload
@@ -455,20 +462,28 @@ async fn update_proxy(
                 _ => None,
             })
             .unwrap_or(existing.proxy_type),
-        client_id: payload.client_id.unwrap_or(existing.client_id),
-        local_ip: payload.local_ip.unwrap_or(existing.local_ip),
+        client_id: payload
+            .client_id
+            .unwrap_or_else(|| existing.client_id.clone()),
+        local_ip: payload
+            .local_ip
+            .unwrap_or_else(|| existing.local_ip.clone()),
         local_port: payload.local_port.unwrap_or(existing.local_port),
         remote_port: payload.remote_port.unwrap_or(existing.remote_port),
-        custom_domains: payload.custom_domains.unwrap_or(existing.custom_domains),
-        proxy_protocol: payload.proxy_protocol.unwrap_or(existing.proxy_protocol),
+        custom_domains: payload
+            .custom_domains
+            .unwrap_or_else(|| existing.custom_domains.clone()),
+        proxy_protocol: payload
+            .proxy_protocol
+            .unwrap_or_else(|| existing.proxy_protocol.clone()),
     };
 
     if let Err(e) = mgr.update_proxy(&name, updated_rule.clone()).await {
         return error_response(400, e);
     }
 
-    // 先删除旧的公网监听器
-    state.on_proxy_delete(&updated_rule).await;
+    // 先删除旧的公网监听器（使用原始规则，确保正确清理旧监听器/域名路由）
+    state.on_proxy_delete(&existing).await;
     // 再创建新的公网监听器
     state.on_proxy_create(&updated_rule).await;
 
@@ -512,7 +527,11 @@ async fn delete_proxy(
         return error_response(400, e);
     }
 
-    // 触发代理规则删除回调（停止公网监听器）
+    // 设置代理状态为 stopping，回调中会更新为 stopped
+    mgr.update_status(&name, rustproxy_core::proxy_manager::ProxyStatus::Stopping)
+        .await;
+
+    // 触发代理规则删除回调（停止公网监听器，等待完成）
     state.on_proxy_delete(&entry.rule).await;
 
     // 通知客户端关闭代理

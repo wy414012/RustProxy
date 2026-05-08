@@ -11,6 +11,7 @@ use anyhow::Result;
 use clap::Parser;
 use rustproxy_core::config::ProxyRule;
 use rustproxy_core::logger;
+use rustproxy_core::proxy_manager::ProxyStatus;
 use rustproxy_proto::message::{ControlMessage, Message};
 use rustproxy_web::state::AppState;
 
@@ -223,32 +224,40 @@ async fn main() -> Result<()> {
     // 2. 设置代理规则创建回调
     let mgr_for_create = proxy_listener_mgr.clone();
     let config_for_create = config.clone();
+    let pm_for_create = app_state.proxy_manager();
     app_state
         .set_on_proxy_create(Arc::new(move |rule: ProxyRule| {
             let mgr = mgr_for_create.clone();
             let config = config_for_create.clone();
-            let rt = match tokio::runtime::Handle::try_current() {
-                Ok(h) => h,
-                Err(_) => return,
-            };
-            rt.spawn(async move {
-                start_proxy_listener(&mgr, &rule, &config).await;
-            });
+            let pm = pm_for_create.clone();
+            Box::pin(async move {
+                pm.update_status(&rule.name, ProxyStatus::Starting).await;
+                let ok = start_proxy_listener(&mgr, &rule, &config).await;
+                pm.update_status(
+                    &rule.name,
+                    if ok {
+                        ProxyStatus::Running
+                    } else {
+                        ProxyStatus::Error
+                    },
+                )
+                .await;
+            })
         }))
         .await;
 
     // 3. 设置代理规则删除回调
     let mgr_for_delete = proxy_listener_mgr.clone();
+    let pm_for_delete = app_state.proxy_manager();
     app_state
         .set_on_proxy_delete(Arc::new(move |rule: ProxyRule| {
             let mgr = mgr_for_delete.clone();
-            let rt = match tokio::runtime::Handle::try_current() {
-                Ok(h) => h,
-                Err(_) => return,
-            };
-            rt.spawn(async move {
+            let pm = pm_for_delete.clone();
+            Box::pin(async move {
+                pm.update_status(&rule.name, ProxyStatus::Stopping).await;
                 stop_proxy_listener(&mgr, &rule).await;
-            });
+                pm.update_status(&rule.name, ProxyStatus::Stopped).await;
+            })
         }))
         .await;
 
@@ -317,15 +326,18 @@ async fn start_existing_listeners(
 ) {
     let proxies = app_state.proxy_manager().list_proxies().await;
     for entry in proxies {
-        // 更新代理状态为 running
+        let ok = start_proxy_listener(listener_mgr, &entry.rule, config).await;
         app_state
             .proxy_manager()
             .update_status(
                 &entry.rule.name,
-                rustproxy_core::proxy_manager::ProxyStatus::Running,
+                if ok {
+                    rustproxy_core::proxy_manager::ProxyStatus::Running
+                } else {
+                    rustproxy_core::proxy_manager::ProxyStatus::Error
+                },
             )
             .await;
-        start_proxy_listener(listener_mgr, &entry.rule, config).await;
     }
 }
 
@@ -345,19 +357,19 @@ async fn register_existing_domain_routes(
     }
 }
 
-/// 启动单个代理规则的公网监听器
+/// 启动单个代理规则的公网监听器，返回是否成功
 async fn start_proxy_listener(
     listener_mgr: &proxy_listener::ProxyListenerManager,
     rule: &rustproxy_core::config::ProxyRule,
     config: &rustproxy_core::config::ServerConfig,
-) {
+) -> bool {
     match rule.proxy_type {
         rustproxy_core::config::ProxyType::Tcp => {
             if rule.remote_port == 0 {
                 tracing::warn!("TCP 代理 {} 未指定 remote_port", rule.name);
-                return;
+                return false;
             }
-            if let Err(e) = listener_mgr
+            match listener_mgr
                 .start_tcp_listener(
                     rule.name.clone(),
                     rule.remote_port,
@@ -366,15 +378,19 @@ async fn start_proxy_listener(
                 )
                 .await
             {
-                tracing::error!("启动 TCP 代理监听 {} 失败: {}", rule.name, e);
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::error!("启动 TCP 代理监听 {} 失败: {}", rule.name, e);
+                    false
+                }
             }
         }
         rustproxy_core::config::ProxyType::Udp => {
             if rule.remote_port == 0 {
                 tracing::warn!("UDP 代理 {} 未指定 remote_port", rule.name);
-                return;
+                return false;
             }
-            if let Err(e) = listener_mgr
+            match listener_mgr
                 .start_udp_listener(
                     rule.name.clone(),
                     rule.remote_port,
@@ -383,7 +399,11 @@ async fn start_proxy_listener(
                 )
                 .await
             {
-                tracing::error!("启动 UDP 代理监听 {} 失败: {}", rule.name, e);
+                Ok(()) => true,
+                Err(e) => {
+                    tracing::error!("启动 UDP 代理监听 {} 失败: {}", rule.name, e);
+                    false
+                }
             }
         }
         rustproxy_core::config::ProxyType::Http => {
@@ -393,6 +413,7 @@ async fn start_proxy_listener(
                 rule.name,
                 rule.custom_domains
             );
+            true
         }
         rustproxy_core::config::ProxyType::Https => {
             listener_mgr.register_domain_route(rule).await;
@@ -401,6 +422,7 @@ async fn start_proxy_listener(
                 rule.name,
                 rule.custom_domains
             );
+            true
         }
     }
 }

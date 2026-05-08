@@ -74,7 +74,9 @@ td.actions{white-space:nowrap}
 .badge-udp{background:rgba(253,203,110,.15);color:var(--warn)}
 .badge-http{background:rgba(0,184,148,.15);color:var(--success)}
 .badge-https{background:rgba(52,152,219,.15);color:#3498db}
+.badge-starting{background:rgba(108,92,231,.15);color:var(--primary)}
 .badge-running{background:rgba(0,184,148,.15);color:var(--success)}
+.badge-stopping{background:rgba(253,203,110,.15);color:var(--warn)}
 .badge-stopped{background:rgba(100,116,139,.15);color:var(--text3)}
 .badge-error{background:rgba(231,76,60,.15);color:var(--danger)}
 
@@ -278,6 +280,9 @@ function renderStats(status, proxies, clients) {
 }
 
 // ---- Proxies ----
+const STATUS_LABEL = {starting:'启动中',running:'运行中',stopping:'停止中',stopped:'已停止',error:'错误'};
+function statusLabel(s) { return STATUS_LABEL[s] || s; }
+
 function renderProxies(proxies) {
   const t = document.getElementById('proxyTable');
   if (!proxies.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
@@ -286,6 +291,7 @@ function renderProxies(proxies) {
     const isStream = (p.proxy_type==='tcp'||p.proxy_type==='udp');
     const clientAddr = (p.local_ip&&p.local_ip!=='127.0.0.1') ? p.local_ip+':'+p.local_port : '127.0.0.1:'+p.local_port;
     const ppLabel = p.proxy_protocol ? 'v'+p.proxy_protocol.replace('v','') : '-';
+    const busy = (p.status==='starting'||p.status==='stopping');
     return `<tr>
     <td style="color:var(--text)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
@@ -294,12 +300,12 @@ function renderProxies(proxies) {
     <td>${esc(clientAddr)}</td>
     <td>${p.custom_domains.length?p.custom_domains.map(esc).join(', '):'-'}</td>
     <td>${ppLabel}</td>
-    <td><span class="badge badge-${p.status}">${p.status}</span></td>
+    <td><span class="badge badge-${p.status}">${statusLabel(p.status)}</span></td>
     <td>${p.connections}</td>
     <td style="font-size:12px">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
     <td class="actions">
-      <button class="btn btn-warn btn-sm" onclick="editProxy('${esc(p.name)}')">编辑</button>
-      <button class="btn btn-danger btn-sm" onclick="deleteProxy('${esc(p.name)}')">删除</button>
+      <button class="btn btn-warn btn-sm" onclick="editProxy('${esc(p.name)}')" ${busy?'disabled style="opacity:.4;pointer-events:none"':''}>编辑</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteProxy('${esc(p.name)}')" ${busy?'disabled style="opacity:.4;pointer-events:none"':''}>删除</button>
     </td>
   </tr>`}).join('')}</tbody>`;
 }
@@ -316,7 +322,7 @@ function renderDashProxies(proxies) {
     <td style="color:var(--text)">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
     <td style="font-size:12px">${mapping}</td>
-    <td><span class="badge badge-${p.status}">${p.status}</span></td>
+    <td><span class="badge badge-${p.status}">${statusLabel(p.status)}</span></td>
     <td>${p.connections}</td>
     <td style="font-size:12px">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
   </tr>`}).join('')}</tbody>`;
