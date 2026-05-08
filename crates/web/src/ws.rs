@@ -1,6 +1,7 @@
 //! WebSocket 实时状态推送
 //!
 //! 前端通过 WebSocket 连接获取代理规则和客户端状态的实时更新。
+//! WebSocket 认证使用 JWT Token（通过查询参数传递）。
 
 use std::time::Duration;
 
@@ -26,7 +27,7 @@ pub async fn ws_handler(
     Query(params): Query<WsParams>,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    // 验证 token
+    // 验证 JWT Token
     if let Some(ref token) = params.token {
         if !validate_ws_token(&state, token).await {
             return (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
@@ -38,19 +39,15 @@ pub async fn ws_handler(
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
-/// 验证 WebSocket 连接的 Token
+/// 验证 WebSocket 连接的 JWT Token
 async fn validate_ws_token(state: &AppState, token: &str) -> bool {
     if token.is_empty() {
         return false;
     }
-    let parts: Vec<&str> = token.rsplitn(2, '-').collect();
-    if parts.len() != 2 {
-        return false;
-    }
-    let token_prefix = parts[0];
     let config = state.server_config().await;
-    let expected = &config.server.token[..8.min(config.server.token.len())];
-    token_prefix == expected
+    let secret = config.server.token.clone();
+    drop(config);
+    crate::auth::validate_jwt(token, &secret).is_ok()
 }
 
 /// WebSocket 连接处理循环

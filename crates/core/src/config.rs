@@ -23,13 +23,25 @@ pub struct ServerSection {
     pub https_port: u16,
 }
 
+/// 默认 JWT Token 过期时间（小时）
+fn default_token_expire_hours() -> u64 {
+    24
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSection {
     pub enable: bool,
     pub bind_addr: String,
     pub bind_port: u16,
     pub user: String,
+    /// 管理面板密码（支持明文或 bcrypt 哈希，推荐使用 bcrypt 哈希）
     pub password: String,
+    /// JWT Token 过期时间（小时），默认 24
+    #[serde(default = "default_token_expire_hours")]
+    pub token_expire_hours: u64,
+    /// CORS 允许的域名列表，留空则仅允许同源访问
+    #[serde(default)]
+    pub cors_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

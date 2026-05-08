@@ -378,7 +378,7 @@ async fn run_web_panel(
     web_config: &rustproxy_core::config::WebSection,
     state: AppState,
 ) -> Result<()> {
-    let app = rustproxy_web::build_app(state);
+    let app = rustproxy_web::build_app(state, web_config.cors_origins.clone());
     let addr = format!("{}:{}", web_config.bind_addr, web_config.bind_port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("Web 面板监听: {}", addr);

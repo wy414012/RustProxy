@@ -188,7 +188,10 @@ impl ProxyManager {
                     rule.proxy_protocol,
                 ],
             )
-            .map_err(|e| format!("数据库写入失败: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("数据库写入内部错误: {}", e);
+                "数据库写入失败".to_string()
+            })?;
         }
 
         // 更新内存状态
@@ -212,13 +215,16 @@ impl ProxyManager {
         let rule = self
             .query_rule(name)
             .await
-            .map_err(|e| format!("代理规则不存在: {}", e))?;
+            .map_err(|_| "代理规则不存在".to_string())?;
 
         // 从数据库删除
         {
             let db = self.db.lock().await;
             db.execute("DELETE FROM proxy_rules WHERE name = ?1", params![name])
-                .map_err(|e| format!("数据库删除失败: {}", e))?;
+                .map_err(|e| {
+                    tracing::error!("数据库删除内部错误: {}", e);
+                    "数据库删除失败".to_string()
+                })?;
         }
 
         // 更新内存状态
@@ -251,7 +257,10 @@ impl ProxyManager {
                     new_rule.proxy_protocol,
                 ],
             )
-            .map_err(|e| format!("数据库更新失败: {}", e))?
+            .map_err(|e| {
+                tracing::error!("数据库更新内部错误: {}", e);
+                "数据库更新失败".to_string()
+            })?
         };
 
         if rows == 0 {
@@ -411,7 +420,10 @@ impl ProxyManager {
         let db = self.db.lock().await;
         let mut stmt = db
             .prepare("SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol FROM proxy_rules WHERE name = ?1")
-            .map_err(|e| format!("数据库查询失败: {}", e))?;
+            .map_err(|e| {
+                tracing::error!("数据库查询内部错误: {}", e);
+                "数据库查询失败".to_string()
+            })?;
 
         stmt.query_row(params![name], |row| {
             let name: String = row.get(0)?;
@@ -438,7 +450,7 @@ impl ProxyManager {
                 proxy_protocol,
             })
         })
-        .map_err(|e| format!("{}", e))
+        .map_err(|_| "代理规则不存在".to_string())
     }
 
     async fn query_all_rules(&self) -> Vec<ProxyRule> {

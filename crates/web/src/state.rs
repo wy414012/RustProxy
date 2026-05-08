@@ -1,8 +1,11 @@
 //! Web 应用共享状态
 //!
 //! 持有代理管理器和客户端通知回调，供 API 层读写代理规则、向客户端推送消息。
+//! 同时包含登录速率限制状态，防止暴力破解。
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::sync::RwLock;
 
@@ -19,6 +22,17 @@ pub type OnProxyCreateFn = Arc<dyn Fn(ProxyRule) + Send + Sync>;
 /// 代理规则删除回调
 pub type OnProxyDeleteFn = Arc<dyn Fn(ProxyRule) + Send + Sync>;
 
+/// 登录速率限制：最大尝试次数
+const MAX_LOGIN_ATTEMPTS: u32 = 5;
+/// 登录速率限制：锁定时长（秒）
+const LOGIN_LOCKOUT_SECS: u64 = 300;
+
+/// 登录尝试记录（用于速率限制）
+struct LoginAttempt {
+    count: u32,
+    window_start: Instant,
+}
+
 /// 应用共享状态（线程安全）
 #[derive(Clone)]
 pub struct AppState {
@@ -32,6 +46,7 @@ struct AppStateInner {
     on_proxy_create: RwLock<Option<OnProxyCreateFn>>,
     on_proxy_delete: RwLock<Option<OnProxyDeleteFn>>,
     connected_clients: RwLock<Vec<String>>,
+    login_attempts: RwLock<HashMap<String, LoginAttempt>>,
 }
 
 impl std::fmt::Debug for AppState {
@@ -52,6 +67,7 @@ impl AppState {
                 on_proxy_create: RwLock::new(None),
                 on_proxy_delete: RwLock::new(None),
                 connected_clients: RwLock::new(Vec::new()),
+                login_attempts: RwLock::new(HashMap::new()),
             }),
         }
     }
@@ -67,6 +83,7 @@ impl AppState {
                 on_proxy_create: RwLock::new(None),
                 on_proxy_delete: RwLock::new(None),
                 connected_clients: RwLock::new(Vec::new()),
+                login_attempts: RwLock::new(HashMap::new()),
             }),
         })
     }
@@ -154,5 +171,51 @@ impl AppState {
     /// 获取服务端配置
     pub async fn server_config(&self) -> tokio::sync::RwLockReadGuard<'_, ServerConfig> {
         self.inner.server_config.read().await
+    }
+
+    /// 检查登录速率限制（返回 true 表示允许尝试）
+    pub async fn check_login_rate_limit(&self, username: &str) -> bool {
+        let mut attempts = self.inner.login_attempts.write().await;
+        let now = Instant::now();
+
+        if let Some(attempt) = attempts.get_mut(username) {
+            let elapsed = now.duration_since(attempt.window_start);
+
+            // 锁定期已过，重置
+            if attempt.count >= MAX_LOGIN_ATTEMPTS && elapsed.as_secs() > LOGIN_LOCKOUT_SECS {
+                attempt.count = 0;
+                attempt.window_start = now;
+                return true;
+            }
+
+            // 已超过最大尝试次数，仍在锁定期
+            if attempt.count >= MAX_LOGIN_ATTEMPTS {
+                return false;
+            }
+
+            true
+        } else {
+            true
+        }
+    }
+
+    /// 记录登录尝试结果
+    pub async fn record_login_attempt(&self, username: &str, success: bool) {
+        let mut attempts = self.inner.login_attempts.write().await;
+        let now = Instant::now();
+
+        if success {
+            // 登录成功，清除该用户的尝试记录
+            attempts.remove(username);
+        } else {
+            // 登录失败，增加计数
+            let attempt = attempts
+                .entry(username.to_string())
+                .or_insert(LoginAttempt {
+                    count: 0,
+                    window_start: now,
+                });
+            attempt.count += 1;
+        }
     }
 }

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use rustproxy_core::config::{ProxyRule, ProxyType};
 use rustproxy_core::proxy_manager::ProxyEntry;
 
+use crate::auth::generate_jwt;
 use crate::state::AppState;
 
 /// 代理规则相关 API 路由
@@ -50,6 +51,108 @@ fn error_response<T: Serialize>(code: u16, message: String) -> Json<ApiResponse<
         message,
         data: None,
     })
+}
+
+// ============================================================
+// 输入验证
+// ============================================================
+
+/// 验证代理规则名称（仅允许字母、数字、横线、下划线，1-64字符）
+fn validate_proxy_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name.len() > 64 {
+        return Err("代理规则名称长度需在 1-64 之间".into());
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("代理规则名称仅允许字母、数字、横线和下划线".into());
+    }
+    Ok(())
+}
+
+/// 验证 IP 地址格式
+fn validate_ip(ip: &str) -> Result<(), String> {
+    if ip.parse::<std::net::IpAddr>().is_err() {
+        return Err(format!("无效的 IP 地址格式: {}", ip));
+    }
+    Ok(())
+}
+
+/// 验证端口号（非零）
+fn validate_port(port: u16, field_name: &str) -> Result<(), String> {
+    if port == 0 {
+        return Err(format!("{} 不能为 0", field_name));
+    }
+    Ok(())
+}
+
+/// 验证域名格式
+fn validate_domain(domain: &str) -> Result<(), String> {
+    if domain.is_empty() || domain.len() > 253 {
+        return Err(format!("无效的域名长度: {}", domain));
+    }
+    if !domain
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '.' || c == '_')
+    {
+        return Err(format!("域名包含非法字符: {}", domain));
+    }
+    if domain.starts_with('-') || domain.starts_with('.') {
+        return Err(format!("域名格式无效: {}", domain));
+    }
+    Ok(())
+}
+
+/// 验证 proxy_protocol 值（仅允许空/"v1"/"v2"）
+fn validate_proxy_protocol(protocol: &str) -> Result<(), String> {
+    match protocol {
+        "" | "v1" | "v2" => Ok(()),
+        _ => Err(format!(
+            "无效的 proxy_protocol: {}，仅支持空/v1/v2",
+            protocol
+        )),
+    }
+}
+
+/// 验证客户端 ID 格式
+fn validate_client_id(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > 64 {
+        return Err("客户端 ID 长度需在 1-64 之间".into());
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err("客户端 ID 仅允许字母、数字、横线、下划线和点号".into());
+    }
+    Ok(())
+}
+
+/// 验证密码（支持明文和 bcrypt 哈希）
+fn verify_password(provided: &str, stored: &str) -> bool {
+    if stored.starts_with("$2b$") || stored.starts_with("$2a$") {
+        // bcrypt 哈希验证
+        bcrypt::verify(provided, stored).unwrap_or(false)
+    } else {
+        // 明文密码比较（向后兼容，使用常量时间比较防止时序攻击）
+        tracing::warn!(
+            "密码以明文存储，建议使用 bcrypt 哈希。可使用 'rustproxy-hash-password <密码>' 命令生成哈希后填入配置文件"
+        );
+        constant_time_eq(provided.as_bytes(), stored.as_bytes())
+    }
+}
+
+/// 常量时间字节比较，防止时序攻击
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 // ============================================================
@@ -141,6 +244,8 @@ struct LoginRequest {
 #[derive(Serialize)]
 struct LoginResponse {
     token: String,
+    /// Token 有效期（秒）
+    expires_in: u64,
 }
 
 // ============================================================
@@ -151,26 +256,37 @@ async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> Json<ApiResponse<LoginResponse>> {
+    // 1. 检查速率限制
+    if !state.check_login_rate_limit(&req.username).await {
+        return error_response(429, "登录尝试过于频繁，请稍后再试".into());
+    }
+
+    // 2. 验证用户名密码
     let config = state.server_config().await;
-    let user_ok = req.username == config.web.user && req.password == config.web.password;
-    let token_prefix = config.server.token[..8].to_string();
+    let user_ok =
+        req.username == config.web.user && verify_password(&req.password, &config.web.password);
+    let token_expire_hours = config.web.token_expire_hours;
+    let jwt_secret = config.server.token.clone();
     drop(config);
 
-    if user_ok {
-        let token = format!("{}-{}-{}", req.username, make_timestamp(), token_prefix);
-        ApiResponse::success(LoginResponse { token })
-    } else {
-        error_response(401, "用户名或密码错误".into())
+    if !user_ok {
+        state.record_login_attempt(&req.username, false).await;
+        return error_response(401, "用户名或密码错误".into());
     }
-}
 
-/// 简易时间戳
-fn make_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let dur = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("{:x}", dur.as_secs())
+    // 3. 重置速率限制
+    state.record_login_attempt(&req.username, true).await;
+
+    // 4. 生成 JWT Token
+    let token = match generate_jwt(&req.username, &jwt_secret, token_expire_hours) {
+        Ok(t) => t,
+        Err(e) => return error_response(500, e),
+    };
+
+    ApiResponse::success(LoginResponse {
+        token,
+        expires_in: token_expire_hours * 3600,
+    })
 }
 
 async fn list_proxies(State(state): State<AppState>) -> Json<ApiResponse<Vec<ProxyInfo>>> {
@@ -183,6 +299,33 @@ async fn create_proxy(
     State(state): State<AppState>,
     Json(payload): Json<CreateProxyRequest>,
 ) -> Json<ApiResponse<ProxyInfo>> {
+    // 输入验证
+    if let Err(e) = validate_proxy_name(&payload.name) {
+        return error_response(400, e);
+    }
+    if let Err(e) = validate_client_id(&payload.client_id) {
+        return error_response(400, e);
+    }
+    if let Err(e) = validate_ip(&payload.local_ip) {
+        return error_response(400, e);
+    }
+    if let Err(e) = validate_port(payload.local_port, "local_port") {
+        return error_response(400, e);
+    }
+    if payload.proxy_type == "tcp" || payload.proxy_type == "udp" {
+        if let Err(e) = validate_port(payload.remote_port, "remote_port") {
+            return error_response(400, e);
+        }
+    }
+    for domain in &payload.custom_domains {
+        if let Err(e) = validate_domain(domain) {
+            return error_response(400, e);
+        }
+    }
+    if let Err(e) = validate_proxy_protocol(&payload.proxy_protocol) {
+        return error_response(400, e);
+    }
+
     // 解析代理类型
     let proxy_type = match payload.proxy_type.as_str() {
         "tcp" => ProxyType::Tcp,
@@ -251,6 +394,45 @@ async fn update_proxy(
     axum::extract::Path(name): axum::extract::Path<String>,
     Json(payload): Json<UpdateProxyRequest>,
 ) -> Json<ApiResponse<ProxyInfo>> {
+    // 输入验证（仅验证提供的字段）
+    if let Some(ref t) = payload.proxy_type {
+        if !matches!(t.as_str(), "tcp" | "udp" | "http" | "https") {
+            return error_response(400, format!("不支持的代理类型: {}", t));
+        }
+    }
+    if let Some(ref id) = payload.client_id {
+        if let Err(e) = validate_client_id(id) {
+            return error_response(400, e);
+        }
+    }
+    if let Some(ref ip) = payload.local_ip {
+        if let Err(e) = validate_ip(ip) {
+            return error_response(400, e);
+        }
+    }
+    if let Some(port) = payload.local_port {
+        if let Err(e) = validate_port(port, "local_port") {
+            return error_response(400, e);
+        }
+    }
+    if let Some(port) = payload.remote_port {
+        if let Err(e) = validate_port(port, "remote_port") {
+            return error_response(400, e);
+        }
+    }
+    if let Some(ref domains) = payload.custom_domains {
+        for domain in domains {
+            if let Err(e) = validate_domain(domain) {
+                return error_response(400, e);
+            }
+        }
+    }
+    if let Some(ref protocol) = payload.proxy_protocol {
+        if let Err(e) = validate_proxy_protocol(protocol) {
+            return error_response(400, e);
+        }
+    }
+
     let mgr = state.proxy_manager();
 
     // 获取现有规则

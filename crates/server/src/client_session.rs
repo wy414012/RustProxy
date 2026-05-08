@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use futures::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
@@ -105,13 +106,27 @@ pub async fn handle_client_with_auth(
     app_state: AppState,
     session_manager: ClientSessionManager,
 ) {
-    // 1. 验证 Token
-    if auth_req.token != config.server.token {
+    // 1. 验证 client_id 格式
+    if !validate_client_id(&auth_req.client_id) {
+        tracing::warn!("客户端 ID 格式无效: {}", auth_req.client_id);
+        let resp = AuthResponse {
+            success: false,
+            message: "客户端 ID 格式无效".to_string(),
+            server_version: String::new(),
+        };
+        let _ = framed
+            .send(Message::Control(ControlMessage::AuthResp(resp)))
+            .await;
+        return;
+    }
+
+    // 2. 验证 Token（常量时间比较，防止时序攻击）
+    if !constant_time_token_eq(&auth_req.token, &config.server.token) {
         tracing::warn!("客户端 {} Token 验证失败", auth_req.client_id);
         let resp = AuthResponse {
             success: false,
             message: "Token 验证失败".to_string(),
-            server_version: VERSION.to_string(),
+            server_version: String::new(), // 认证失败不暴露版本信息
         };
         let _ = framed
             .send(Message::Control(ControlMessage::AuthResp(resp)))
@@ -121,7 +136,7 @@ pub async fn handle_client_with_auth(
 
     let client_id = auth_req.client_id.clone();
 
-    // 2. 发送认证成功响应
+    // 3. 发送认证成功响应
     let resp = AuthResponse {
         success: true,
         message: "认证成功".to_string(),
@@ -137,17 +152,17 @@ pub async fn handle_client_with_auth(
 
     tracing::info!("客户端 {} (v{}) 认证成功", client_id, auth_req.version);
 
-    // 3. 创建消息通道
+    // 4. 创建消息通道
     let (tx, mut rx) = mpsc::channel::<Message>(256);
 
-    // 4. 注册会话
+    // 5. 注册会话
     session_manager.register(client_id.clone(), tx).await;
 
     // 更新 AppState 中的客户端列表
     let clients = session_manager.connected_clients().await;
     app_state.set_connected_clients(clients).await;
 
-    // 5. 推送该客户端的所有代理规则
+    // 6. 推送该客户端的所有代理规则
     let proxy_manager = app_state.proxy_manager();
     let proxies = proxy_manager.list_proxies_by_client(&client_id).await;
     for entry in proxies {
@@ -167,17 +182,20 @@ pub async fn handle_client_with_auth(
         tracing::debug!("推送代理规则 {} 到客户端 {}", entry.rule.name, client_id);
     }
 
-    // 6. 心跳定时器
-    let heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    // 7. 心跳定时器
+    let heartbeat_interval = tokio::time::interval(Duration::from_secs(30));
     tokio::pin!(heartbeat_interval);
+    let mut last_heartbeat = Instant::now();
+    const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(90); // 3 倍心跳间隔
 
-    // 7. 进入消息循环
+    // 8. 进入消息循环
     loop {
         tokio::select! {
             // 接收客户端消息
             result = framed.next() => {
                 match result {
                     Some(Ok(Message::Control(ControlMessage::Ping))) => {
+                        last_heartbeat = Instant::now();
                         if framed.send(Message::Control(ControlMessage::Pong)).await.is_err() {
                             break;
                         }
@@ -213,15 +231,41 @@ pub async fn handle_client_with_auth(
             }
             // 心跳检测
             _ = heartbeat_interval.tick() => {
-                // 检查客户端是否长时间无心跳
+                if last_heartbeat.elapsed() > HEARTBEAT_TIMEOUT {
+                    tracing::warn!("客户端 {} 心跳超时，断开连接", client_id);
+                    break;
+                }
             }
         }
     }
 
-    // 8. 清理
+    // 9. 清理
     session_manager.unregister(&client_id).await;
     let clients = session_manager.connected_clients().await;
     app_state.set_connected_clients(clients).await;
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// 验证客户端 ID 格式（仅允许字母、数字、横线、下划线、点号，1-64字符）
+fn validate_client_id(id: &str) -> bool {
+    if id.is_empty() || id.len() > 64 {
+        return false;
+    }
+    id.chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+/// 常量时间 Token 比较，防止时序攻击
+fn constant_time_token_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut result: u8 = 0;
+    for (x, y) in a_bytes.iter().zip(b_bytes.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
+}

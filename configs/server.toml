@@ -15,8 +15,14 @@ enable = true
 bind_addr = "0.0.0.0"
 bind_port = 7500
 user = "admin"
-# ⚠️ 生产环境必须修改为强密码！
+# ⚠️ 生产环境必须修改为强密码！支持明文或 bcrypt 哈希（推荐使用 bcrypt）
+# 可使用命令生成 bcrypt 哈希: rustproxy-hash-password <密码>
 password = "CHANGE_ME_STRONG_PASSWORD"
+# JWT Token 过期时间（小时），默认 24 小时
+# token_expire_hours = 24
+# CORS 允许的域名列表，留空则仅允许同源访问（推荐生产环境留空）
+# 开发环境示例: ["http://localhost:3000"]
+# cors_origins = []
 
 [tls]
 # 自动生成自签证书（首次启动后保存到 cert_file/key_file 指定路径）

@@ -54,6 +54,10 @@ tower-http = { version = "0.5", features = ["cors", "fs"] }
 rust-embed = { version = "8", features = ["mime-guess"] }
 mime_guess = "2"
 
+# Security
+jsonwebtoken = "9"
+bcrypt = "0.15"
+
 # Internal crates
 rustproxy-core = { path = "crates/core" }
 rustproxy-proto = { path = "crates/proto" }

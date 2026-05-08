@@ -27,7 +27,9 @@ use crate::state::AppState;
 struct Assets;
 
 /// 构建 Web 应用路由
-pub fn build_app(state: AppState) -> Router {
+///
+/// `cors_origins` 为 CORS 允许的域名列表，留空则仅允许同源访问（推荐生产环境留空）。
+pub fn build_app(state: AppState, cors_origins: Vec<String>) -> Router {
     // API 路由 + 认证中间件
     let api_routes =
         proxy_routes()
@@ -37,12 +39,34 @@ pub fn build_app(state: AppState) -> Router {
                 auth::auth_middleware,
             ));
 
-    Router::new()
+    let mut router = Router::new()
         .nest("/api", api_routes)
         .route("/health", get(health_check))
         .fallback(static_handler)
-        .layer(CorsLayer::permissive())
-        .with_state(state)
+        .with_state(state);
+
+    // 仅在配置了 CORS 源时添加 CORS 层，否则仅允许同源访问
+    if !cors_origins.is_empty() {
+        let cors = build_cors_layer(&cors_origins);
+        router = router.layer(cors);
+    }
+
+    router
+}
+
+/// 根据配置构建 CORS 层
+fn build_cors_layer(origins: &[String]) -> CorsLayer {
+    use axum::http::Method;
+
+    let allowed_origins: Vec<_> = origins
+        .iter()
+        .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
+        .collect();
+
+    CorsLayer::new()
+        .allow_origin(allowed_origins)
+        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
 }
 
 async fn health_check() -> &'static str {
