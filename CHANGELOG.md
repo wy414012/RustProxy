@@ -6,6 +6,10 @@
 
 ### Fixed
 
+- 编辑代理规则时仅修改 `local_addr` 而 `remote_port` 不变导致报错 (#3)
+  - `stop_listener` 在 `abort()` 后等待任务实际结束再返回，确保端口释放后再绑定新监听器
+  - `remote_port` 验证仅对 TCP/UDP 类型要求非零，HTTP/HTTPS 的 `remote_port: 0` 为合法值
+  - 前端编辑 HTTP/HTTPS 规则时不发送 `remote_port` 字段，实现真正的部分更新
 - 代理规则热刷新不及时，修改/删除代理规则后需重启服务端才生效 (#2)
   - 修复 `update_proxy` 用更新后的规则调用删除回调，导致旧监听器/域名路由无法正确清理
   - 回调类型从同步改为异步，等待监听器实际启停完成，避免端口冲突

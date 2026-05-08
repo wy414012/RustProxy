@@ -647,10 +647,18 @@ impl ProxyListenerManager {
     }
 
     /// 停止独立端口监听器
+    ///
+    /// 调用 `abort()` 后等待任务实际结束，确保端口被释放，
+    /// 避免后续 `start_tcp_listener` / `start_udp_listener` 因端口仍被占用而绑定失败。
     pub async fn stop_listener(&self, name: &str) {
-        let mut inner = self.listeners.write().await;
-        if let Some(handle) = inner.remove(name) {
+        let handle = {
+            let mut inner = self.listeners.write().await;
+            inner.remove(name)
+        };
+        if let Some(handle) = handle {
             handle.abort();
+            // 等待任务实际结束并释放端口
+            let _ = handle.await;
             tracing::info!("代理监听 {} 已停止", name);
         }
     }

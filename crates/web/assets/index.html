@@ -418,8 +418,11 @@ async function submitProxy() {
 
   try {
     if (editingProxy) {
-      // 更新模式：只发送有变化的字段
-      const body = { type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains, proxy_protocol: proxyProtocol };
+      // 更新模式：仅发送有变化的字段，HTTP/HTTPS 不发送 remote_port
+      const body = { type, client_id: clientId, local_ip: localIp, local_port: localPort, custom_domains: domains, proxy_protocol: proxyProtocol };
+      if (type === 'tcp' || type === 'udp') {
+        body.remote_port = remotePort;
+      }
       await api('PUT', '/proxies/' + encodeURIComponent(editingProxy), body);
       toast('规则更新成功','success');
     } else {

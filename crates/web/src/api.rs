@@ -422,9 +422,24 @@ async fn update_proxy(
             return error_response(400, e);
         }
     }
+    // remote_port 仅对 TCP/UDP 类型做非零验证，HTTP/HTTPS 合法值为 0
+    // 需要先确定有效的代理类型：优先取 payload 中的值，否则取已有规则
+    let mgr = state.proxy_manager();
+    let existing = match mgr.get_proxy(&name).await {
+        Some(e) => e.rule,
+        None => return error_response(404, format!("代理规则不存在: {}", name)),
+    };
+    // 判断有效代理类型是否为 TCP/UDP（用于条件验证 remote_port）
+    let is_stream_type = match payload.proxy_type.as_deref() {
+        Some("tcp") | Some("udp") => true,
+        Some("http") | Some("https") => false,
+        _ => matches!(existing.proxy_type, ProxyType::Tcp | ProxyType::Udp),
+    };
     if let Some(port) = payload.remote_port {
-        if let Err(e) = validate_port(port, "remote_port") {
-            return error_response(400, e);
+        if is_stream_type {
+            if let Err(e) = validate_port(port, "remote_port") {
+                return error_response(400, e);
+            }
         }
     }
     if let Some(ref domains) = payload.custom_domains {
@@ -439,14 +454,6 @@ async fn update_proxy(
             return error_response(400, e);
         }
     }
-
-    let mgr = state.proxy_manager();
-
-    // 获取现有规则
-    let existing = match mgr.get_proxy(&name).await {
-        Some(e) => e.rule,
-        None => return error_response(404, format!("代理规则不存在: {}", name)),
-    };
 
     // 合并更新（先 clone existing，因为后续 on_proxy_delete 还需要使用原始规则）
     let updated_rule = ProxyRule {
