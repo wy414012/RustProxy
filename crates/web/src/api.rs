@@ -266,7 +266,7 @@ async fn login(
     let user_ok =
         req.username == config.web.user && verify_password(&req.password, &config.web.password);
     let token_expire_hours = config.web.token_expire_hours;
-    let jwt_secret = config.server.token.clone();
+    let jwt_secret = config.web.jwt_secret.clone();
     drop(config);
 
     if !user_ok {

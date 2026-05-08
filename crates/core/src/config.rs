@@ -36,6 +36,10 @@ pub struct WebSection {
     pub user: String,
     /// 管理面板密码（支持明文或 bcrypt 哈希，推荐使用 bcrypt 哈希）
     pub password: String,
+    /// JWT 签名密钥，独立于客户端认证 Token (server.token)
+    /// 若留空，启动时自动生成随机密钥并打印到日志
+    #[serde(default)]
+    pub jwt_secret: String,
     /// JWT Token 过期时间（小时），默认 24
     #[serde(default = "default_token_expire_hours")]
     pub token_expire_hours: u64,
@@ -153,6 +157,7 @@ bind_addr = "0.0.0.0"
 bind_port = 7500
 user = "admin"
 password = "admin"
+jwt_secret = "my-jwt-secret"
 
 [tls]
 auto_cert = true
@@ -164,6 +169,7 @@ key_file = ""
         assert_eq!(config.server.http_port, 8080);
         assert_eq!(config.server.https_port, 8443);
         assert_eq!(config.web.user, "admin");
+        assert_eq!(config.web.jwt_secret, "my-jwt-secret");
         assert!(config.tls.auto_cert);
     }
 
@@ -190,6 +196,8 @@ key_file = ""
         let config = parse_server_config(content).unwrap();
         assert_eq!(config.server.http_port, 0);
         assert_eq!(config.server.https_port, 0);
+        // jwt_secret 默认为空，服务端启动时会自动生成
+        assert!(config.web.jwt_secret.is_empty());
     }
 
     #[test]

@@ -57,6 +57,7 @@ mime_guess = "2"
 # Security
 jsonwebtoken = "9"
 bcrypt = "0.15"
+getrandom = "0.2"
 
 # Internal crates
 rustproxy-core = { path = "crates/core" }

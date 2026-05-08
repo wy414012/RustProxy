@@ -16,6 +16,18 @@ use rustproxy_web::state::AppState;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// 生成随机十六进制字符串（用于 jwt_secret 等）
+fn generate_random_secret(len: usize) -> String {
+    use std::fmt::Write;
+    let mut bytes = vec![0u8; len];
+    getrandom::getrandom(&mut bytes).expect("生成随机数失败");
+    let mut s = String::with_capacity(len * 2);
+    for b in &bytes {
+        write!(s, "{:02x}", b).unwrap();
+    }
+    s
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "rustproxy-server", version = VERSION, about = "RustProxy 服务端")]
 struct Args {
@@ -63,8 +75,17 @@ async fn main() -> Result<()> {
     // 加载配置
     let config_content = std::fs::read_to_string(&args.config)
         .map_err(|e| anyhow::anyhow!("读取配置文件失败 {}: {}", args.config, e))?;
-    let config = rustproxy_core::config::parse_server_config(&config_content)?;
+    let mut config = rustproxy_core::config::parse_server_config(&config_content)?;
     tracing::info!("配置已加载: {}", args.config);
+
+    // 如果 jwt_secret 为空，自动生成随机密钥
+    if config.web.jwt_secret.is_empty() {
+        let secret = generate_random_secret(32);
+        tracing::warn!(
+            "web.jwt_secret 未配置，已自动生成随机密钥。建议在配置文件中显式设置以避免重启后 Token 失效"
+        );
+        config.web.jwt_secret = secret;
+    }
 
     // 确定数据库路径
     let db_path = args.db.clone().unwrap_or_else(|| {

@@ -33,6 +33,11 @@ user = "admin"
 #      例如:     ./rustproxy-server hash-password my-secret
 #      会输出类似: $2b$12$xxxxxx...  的哈希值，把整行粘贴到下面即可
 password = "CHANGE_ME_STRONG_PASSWORD"
+# JWT 签名密钥，用于 Web 面板的 Token 签发与验证
+# ⚠️ 此密钥独立于客户端认证 Token (server.token)，不要复用！
+# 留空则启动时自动生成随机密钥（重启后已签发的 JWT 将失效，需重新登录）
+# 生产环境建议显式设置为随机强密钥，例如: jwt_secret = "a1b2c3d4e5f6..."
+jwt_secret = ""
 # JWT Token 过期时间（小时），过期后需要重新登录
 # 默认 24 小时，可根据需要调整
 # token_expire_hours = 24

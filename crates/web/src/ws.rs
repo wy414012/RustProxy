@@ -45,7 +45,7 @@ async fn validate_ws_token(state: &AppState, token: &str) -> bool {
         return false;
     }
     let config = state.server_config().await;
-    let secret = config.server.token.clone();
+    let secret = config.web.jwt_secret.clone();
     drop(config);
     crate::auth::validate_jwt(token, &secret).is_ok()
 }

@@ -65,10 +65,19 @@ pub enum FrameError {
 
     #[error("序列化错误: {0}")]
     Serialize(#[from] serde_json::Error),
+
+    #[error("帧长度超过最大限制: {0} > {MAX_FRAME_SIZE}")]
+    FrameTooLarge(usize),
 }
 
 /// 帧头大小: 4 (length) + 1 (type) + 2 (reserved) = 7 bytes
 const HEADER_SIZE: usize = 7;
+
+/// 单帧最大 payload 长度（64 MiB）
+///
+/// 超过此长度的帧将被拒绝并断开连接，防止恶意客户端通过超大 length 值触发内存耗尽攻击。
+/// 正常代理流量中，单帧 unlikely 超过几 MB；如需传输更大数据，应在应用层分片。
+const MAX_FRAME_SIZE: usize = 64 * 1024 * 1024;
 
 /// RustProxy 帧编解码器
 #[derive(Debug, Default)]
@@ -143,6 +152,11 @@ impl Decoder for FrameCodec {
         let len = header.get_u32() as usize;
         let msg_type_val = header.get_u8();
         let _reserved = header.get_u16();
+
+        // 防御性检查：拒绝超大帧，防止 DoS 攻击
+        if len > MAX_FRAME_SIZE {
+            return Err(FrameError::FrameTooLarge(len));
+        }
 
         if src.len() < HEADER_SIZE + len {
             return Ok(None);

@@ -1,7 +1,7 @@
 //! 认证中间件
 //!
 //! 保护 `/api/*` 路由（除登录接口外），验证 JWT Token。
-//! JWT 使用 HS256 算法签名，密钥为服务端配置中的 `server.token`。
+//! JWT 使用 HS256 算法签名，密钥为服务端配置中的 `web.jwt_secret`（独立于客户端认证 Token）。
 
 use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
 
@@ -84,7 +84,7 @@ pub async fn auth_middleware(
         Some(header) if header.starts_with("Bearer ") => {
             let token = &header[7..];
             let config = state.server_config().await;
-            let secret = config.server.token.clone();
+            let secret = config.web.jwt_secret.clone();
             drop(config);
 
             if validate_jwt(token, &secret).is_ok() {
