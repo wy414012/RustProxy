@@ -80,8 +80,8 @@ jobs:
           - { name: "linux-i386",   target: "i686-unknown-linux-musl",        os: "ubuntu-latest",   use_cross: true,  suffix: "i686-musl",        bin_ext: "" }
           # Windows (原生构建)
           - { name: "windows-amd64", target: "x86_64-pc-windows-msvc",       os: "windows-latest",  use_cross: false, suffix: "x86_64-windows",   bin_ext: ".exe" }
-          # macOS (原生构建)
-          - { name: "macos-amd64",  target: "x86_64-apple-darwin",            os: "macos-15-large",  use_cross: false, suffix: "x86_64-macos",     bin_ext: "" }
+          # macOS (arm64 原生构建，amd64 交叉编译)
+          - { name: "macos-amd64",  target: "x86_64-apple-darwin",            os: "macos-latest",    use_cross: false, suffix: "x86_64-macos",     bin_ext: "" }
           - { name: "macos-arm64",  target: "aarch64-apple-darwin",           os: "macos-latest",    use_cross: false, suffix: "aarch64-macos",    bin_ext: "" }
     steps:
       - name: Checkout source code
