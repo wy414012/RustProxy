@@ -74,10 +74,11 @@ jobs:
       matrix:
         job:
           # Linux (交叉编译，使用 cross)
-          - { name: "linux-amd64",  target: "x86_64-unknown-linux-musl",      os: "ubuntu-latest",   use_cross: true,  suffix: "x86_64-musl",      bin_ext: "" }
-          - { name: "linux-arm64",  target: "aarch64-unknown-linux-musl",     os: "ubuntu-latest",   use_cross: true,  suffix: "aarch64-musl",     bin_ext: "" }
-          - { name: "linux-armv7",  target: "armv7-unknown-linux-musleabihf", os: "ubuntu-latest",   use_cross: true,  suffix: "armv7-musleabihf", bin_ext: "" }
-          - { name: "linux-i386",   target: "i686-unknown-linux-musl",        os: "ubuntu-latest",   use_cross: true,  suffix: "i686-musl",        bin_ext: "" }
+          - { name: "linux-amd64",  target: "x86_64-unknown-linux-musl",      os: "ubuntu-latest",   use_cross: true,  suffix: "x86_64-linux-musl",      bin_ext: "" }
+          - { name: "linux-arm64",  target: "aarch64-unknown-linux-musl",     os: "ubuntu-latest",   use_cross: true,  suffix: "aarch64-linux-musl",     bin_ext: "" }
+          - { name: "linux-armv7",  target: "armv7-unknown-linux-musleabihf", os: "ubuntu-latest",   use_cross: true,  suffix: "armv7-linux-musleabihf", bin_ext: "" }
+          - { name: "linux-i386",   target: "i686-unknown-linux-musl",        os: "ubuntu-latest",   use_cross: true,  suffix: "i686-linux-musl",        bin_ext: "" }
+          - { name: "amd64fb",      target: "x86_64-unknown-freebsd",         os: "ubuntu-latest",   use_cross: true,  suffix: "freebsd-linux-amd64fb",  bin_ext: "" }
           # Windows (原生构建)
           - { name: "windows-amd64", target: "x86_64-pc-windows-msvc",       os: "windows-latest",  use_cross: false, suffix: "x86_64-windows",   bin_ext: ".exe" }
           # macOS (arm64 原生构建，amd64 交叉编译)

@@ -56,7 +56,7 @@ $:
             cp configs/server.toml dist/server/
             cp deploy/rustproxy-server.service dist/server/
             cp deploy/README.md dist/server/
-            cd dist/server && tar czf ../rustproxy-server-x86_64-musl.tar.gz rustproxy-server server.toml rustproxy-server.service README.md
+            cd dist/server && tar czf ../rustproxy-server-x86_64-linux-musl.tar.gz rustproxy-server server.toml rustproxy-server.service README.md
         - name: package client x86_64
           script: |
             mkdir -p dist/client
@@ -64,7 +64,7 @@ $:
             cp configs/client.toml dist/client/
             cp deploy/rustproxy-client.service dist/client/
             cp deploy/README.md dist/client/
-            cd dist/client && tar czf ../rustproxy-client-x86_64-musl.tar.gz rustproxy-client client.toml rustproxy-client.service README.md
+            cd dist/client && tar czf ../rustproxy-client-x86_64-linux-musl.tar.gz rustproxy-client client.toml rustproxy-client.service README.md
         - name: notify amd64 done
           type: cnb:resolve
           options:
@@ -77,8 +77,8 @@ $:
           image: cnbcool/attachments:latest
           settings:
             attachments:
-              - "./dist/rustproxy-server-x86_64-musl.tar.gz"
-              - "./dist/rustproxy-client-x86_64-musl.tar.gz"
+              - "./dist/rustproxy-server-x86_64-linux-musl.tar.gz"
+              - "./dist/rustproxy-client-x86_64-linux-musl.tar.gz"
 
     # Pipeline 2: 构建 aarch64 二进制并打包
     - runner:
@@ -96,7 +96,7 @@ $:
             cp configs/server.toml dist/server/
             cp deploy/rustproxy-server.service dist/server/
             cp deploy/README.md dist/server/
-            cd dist/server && tar czf ../rustproxy-server-aarch64-musl.tar.gz rustproxy-server server.toml rustproxy-server.service README.md
+            cd dist/server && tar czf ../rustproxy-server-aarch64-linux-musl.tar.gz rustproxy-server server.toml rustproxy-server.service README.md
         - name: package client aarch64
           script: |
             mkdir -p dist/client
@@ -104,7 +104,7 @@ $:
             cp configs/client.toml dist/client/
             cp deploy/rustproxy-client.service dist/client/
             cp deploy/README.md dist/client/
-            cd dist/client && tar czf ../rustproxy-client-aarch64-musl.tar.gz rustproxy-client client.toml rustproxy-client.service README.md
+            cd dist/client && tar czf ../rustproxy-client-aarch64-linux-musl.tar.gz rustproxy-client client.toml rustproxy-client.service README.md
         - name: notify arm64 done
           type: cnb:resolve
           options:
@@ -117,8 +117,8 @@ $:
           image: cnbcool/attachments:latest
           settings:
             attachments:
-              - "./dist/rustproxy-server-aarch64-musl.tar.gz"
-              - "./dist/rustproxy-client-aarch64-musl.tar.gz"
+              - "./dist/rustproxy-server-aarch64-linux-musl.tar.gz"
+              - "./dist/rustproxy-client-aarch64-linux-musl.tar.gz"
 
     # Pipeline 3: 等待双架构构建完成，创建 Release
     - docker:
