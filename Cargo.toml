@@ -55,7 +55,7 @@ rust-embed = { version = "8", features = ["mime-guess"] }
 mime_guess = "2"
 
 # Security
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs"] }
 bcrypt = "0.15"
 getrandom = "0.2"
 
