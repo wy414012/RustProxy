@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "rustproxy-client"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1154,7 +1154,7 @@ dependencies = [
 
 [[package]]
 name = "rustproxy-core"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1175,7 +1175,7 @@ dependencies = [
 
 [[package]]
 name = "rustproxy-proto"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "bytes",
  "rustproxy-core",
@@ -1187,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "rustproxy-server"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "axum",
@@ -1213,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "rustproxy-web"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "anyhow",
  "axum",
