@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 use rustproxy_core::config::{ProxyRule, ServerConfig};
 use rustproxy_core::proxy_manager::ProxyManager;
@@ -50,6 +50,7 @@ struct AppStateInner {
     on_proxy_create: RwLock<Option<OnProxyCreateFn>>,
     on_proxy_delete: RwLock<Option<OnProxyDeleteFn>>,
     connected_clients: RwLock<Vec<String>>,
+    client_change_tx: broadcast::Sender<String>,
     login_attempts: RwLock<HashMap<String, LoginAttempt>>,
 }
 
@@ -62,6 +63,7 @@ impl std::fmt::Debug for AppState {
 impl AppState {
     /// 创建新的应用状态
     pub fn new(config: ServerConfig) -> Self {
+        let (client_change_tx, _) = broadcast::channel(16);
         let proxy_manager = ProxyManager::new();
         Self {
             inner: Arc::new(AppStateInner {
@@ -71,6 +73,7 @@ impl AppState {
                 on_proxy_create: RwLock::new(None),
                 on_proxy_delete: RwLock::new(None),
                 connected_clients: RwLock::new(Vec::new()),
+                client_change_tx,
                 login_attempts: RwLock::new(HashMap::new()),
             }),
         }
@@ -78,6 +81,7 @@ impl AppState {
 
     /// 创建带数据库的应用状态
     pub fn with_db(config: ServerConfig, db_path: &str) -> anyhow::Result<Self> {
+        let (client_change_tx, _) = broadcast::channel(16);
         let proxy_manager = ProxyManager::open(db_path)?;
         Ok(Self {
             inner: Arc::new(AppStateInner {
@@ -87,6 +91,7 @@ impl AppState {
                 on_proxy_create: RwLock::new(None),
                 on_proxy_delete: RwLock::new(None),
                 connected_clients: RwLock::new(Vec::new()),
+                client_change_tx,
                 login_attempts: RwLock::new(HashMap::new()),
             }),
         })
@@ -160,16 +165,25 @@ impl AppState {
         }
     }
 
-    /// 更新已连接客户端列表
+    /// 更新已连接客户端列表，并广播变更通知
     pub async fn set_connected_clients(&self, clients: Vec<String>) {
-        let mut list = self.inner.connected_clients.write().await;
-        *list = clients;
+        {
+            let mut list = self.inner.connected_clients.write().await;
+            *list = clients;
+        }
+        // 通知 WebSocket 立即推送客户端变更
+        let _ = self.inner.client_change_tx.send("change".to_string());
     }
 
     /// 获取已连接客户端列表
     pub async fn connected_clients(&self) -> Vec<String> {
         let list = self.inner.connected_clients.read().await;
         list.clone()
+    }
+
+    /// 订阅客户端变更事件（用于 WebSocket 立即推送）
+    pub fn subscribe_client_changes(&self) -> broadcast::Receiver<String> {
+        self.inner.client_change_tx.subscribe()
     }
 
     /// 获取服务端配置

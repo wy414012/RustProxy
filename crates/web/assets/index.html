@@ -171,7 +171,10 @@ td.actions{white-space:nowrap}
       <div class="form-group"><label>协议类型</label>
         <select id="proxyType" onchange="onProxyTypeChange()"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="http">HTTP</option><option value="https">HTTPS</option></select>
       </div>
-      <div class="form-group"><label>客户端 ID</label><input id="proxyClientId" placeholder="my-laptop"></div>
+      <div class="form-group"><label>客户端</label>
+        <select id="proxyClientId" onchange="onClientIdChange()"><option value="">-- 请选择在线客户端 --</option></select>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px" id="clientIdHint">选择已连接的客户端</div>
+      </div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div class="form-group" id="serverPortGroup"><label>服务端监听端口</label><input id="proxyRemotePort" type="number" placeholder="6000"><div style="font-size:11px;color:var(--text3);margin-top:3px">外部用户访问的服务器端口</div></div>
@@ -198,6 +201,7 @@ const API = '/api';
 let token = localStorage.getItem('rp_token') || '';
 let ws = null;
 let editingProxy = null; // null = 创建模式, string = 编辑模式（规则名）
+let cachedClients = []; // 缓存客户端列表数据
 
 // ---- API ----
 async function api(method, path, body) {
@@ -264,6 +268,18 @@ async function refreshAll() {
   } catch(e) {
     if (e.message.includes('401') || e.message.includes('Unauthorized')) doLogout();
   }
+}
+
+/// 仅刷新客户端列表（客户端上线/下线时立即调用）
+async function refreshClients() {
+  try {
+    const clients = await api('GET', '/clients');
+    renderClients(clients);
+    // 同步更新仪表盘统计中的在线客户端数
+    const online = clients.filter(c=>c.online).length;
+    const onlineEl = document.querySelector('.stat-card:nth-child(2) .value');
+    if (onlineEl) onlineEl.textContent = online;
+  } catch(_){}
 }
 
 // ---- Stats ----
@@ -342,6 +358,8 @@ function showCreateModal() {
   document.getElementById('proxyDomains').value = '';
   document.getElementById('proxyProtocol').value = '';
   onProxyTypeChange();
+  populateClientIdSelect();
+  onClientIdChange();
   document.getElementById('proxyModal').classList.add('show');
   document.getElementById('proxyName').focus();
 }
@@ -355,7 +373,9 @@ async function editProxy(name) {
     document.getElementById('proxyName').value = p.name;
     document.getElementById('proxyName').disabled = true;
     document.getElementById('proxyType').value = p.proxy_type;
+    populateClientIdSelect();
     document.getElementById('proxyClientId').value = p.client_id;
+    onClientIdChange();
     document.getElementById('proxyRemotePort').value = p.remote_port || '';
     // 组装客户端地址
     const addr = p.local_ip + ':' + p.local_port;
@@ -412,7 +432,7 @@ async function submitProxy() {
     localPort = parseInt(localAddr) || 0;
   }
 
-  if (!name || !clientId || !localPort) { toast('请填写必填项（名称、客户端ID、端口）','error'); return; }
+  if (!name || !clientId || !localPort) { toast('请填写必填项（名称、选择客户端、端口）','error'); return; }
   if ((type === 'tcp' || type === 'udp') && !remotePort) { toast('TCP/UDP 类型必须填写服务端监听端口','error'); return; }
   if ((type === 'http' || type === 'https') && !domains.length) { toast('HTTP/HTTPS 类型必须填写自定义域名','error'); return; }
 
@@ -446,13 +466,71 @@ async function deleteProxy(name) {
 
 // ---- Clients ----
 function renderClients(clients) {
+  cachedClients = clients;
   const t = document.getElementById('clientTable');
   if (!clients.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
-  t.innerHTML = `<thead><tr><th>客户端 ID</th><th>状态</th></tr></thead>
+  t.innerHTML = `<thead><tr><th>客户端 ID</th><th>状态</th><th>操作</th></tr></thead>
   <tbody>${clients.map(c=>`<tr>
     <td style="color:var(--text)">${esc(c.id)}</td>
     <td><span class="badge ${c.online?'badge-online':'badge-offline'}">${c.online?'在线':'离线'}</span></td>
+    <td class="actions">${c.online?`<button class="btn btn-primary btn-sm" onclick="createProxyForClient('${esc(c.id)}')">创建规则</button>`:''}</td>
   </tr>`).join('')}</tbody>`;
+  // 如果模态框打开，刷新下拉选项
+  if (document.getElementById('proxyModal').classList.contains('show')) {
+    populateClientIdSelect();
+  }
+}
+
+/// 快捷操作：从客户端列表直接为该客户端创建规则
+function createProxyForClient(clientId) {
+  showCreateModal();
+  document.getElementById('proxyClientId').value = clientId;
+  onClientIdChange();
+}
+
+/// 填充客户端 ID 下拉选项
+function populateClientIdSelect() {
+  const sel = document.getElementById('proxyClientId');
+  const currentVal = sel.value;
+  const onlineClients = cachedClients.filter(c => c.online);
+
+  sel.innerHTML = '<option value="">-- 请选择在线客户端 --</option>';
+  onlineClients.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.id;
+    sel.appendChild(opt);
+  });
+
+  // 编辑模式下，如果当前客户端不在线，额外添加该选项
+  if (editingProxy && currentVal) {
+    const exists = onlineClients.some(c => c.id === currentVal);
+    if (!exists) {
+      const opt = document.createElement('option');
+      opt.value = currentVal;
+      opt.textContent = currentVal + '（离线）';
+      sel.appendChild(opt);
+    }
+  }
+
+  // 恢复选中值
+  if (currentVal && sel.querySelector(`option[value="${currentVal}"]`)) {
+    sel.value = currentVal;
+  }
+}
+
+/// 客户端 ID 选择变化时的提示
+function onClientIdChange() {
+  const sel = document.getElementById('proxyClientId');
+  const hint = document.getElementById('clientIdHint');
+  if (!sel.value) {
+    hint.textContent = '选择已连接的客户端';
+    hint.style.color = 'var(--text3)';
+  } else {
+    const c = cachedClients.find(c => c.id === sel.value);
+    hint.textContent = c && c.online ? '客户端在线' : '客户端离线';
+    hint.style.color = c && c.online ? 'var(--success)' : 'var(--warn)';
+  }
 }
 
 // ---- WebSocket ----
@@ -462,7 +540,12 @@ function connectWS() {
   ws.onmessage = e => {
     try {
       const data = JSON.parse(e.data);
-      if (data.type === 'status') refreshAll();
+      if (data.type === 'status') {
+        refreshAll();
+      } else if (data.type === 'client_change') {
+        // 客户端上线/下线，立即刷新客户端列表
+        refreshClients();
+      }
     } catch(_){}
   };
   ws.onclose = () => { setTimeout(connectWS, 5000); };

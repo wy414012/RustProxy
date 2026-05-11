@@ -51,17 +51,37 @@ async fn validate_ws_token(state: &AppState, token: &str) -> bool {
 }
 
 /// WebSocket 连接处理循环
+///
+/// 监听两种事件：
+/// 1. 定时心跳（3秒），推送代理状态摘要
+/// 2. 客户端变更事件，立即推送在线客户端列表
 async fn handle_ws(mut socket: WebSocket, state: AppState) {
+    let mut client_rx = state.subscribe_client_changes();
     let mut interval = tokio::time::interval(Duration::from_secs(3));
 
     loop {
-        interval.tick().await;
-
-        let status_data = build_status_message(&state).await;
-
-        match socket.send(Message::Text(status_data)).await {
-            Ok(()) => {}
-            Err(_) => break,
+        tokio::select! {
+            _ = interval.tick() => {
+                let status_data = build_status_message(&state).await;
+                if socket.send(Message::Text(status_data)).await.is_err() {
+                    break;
+                }
+            }
+            result = client_rx.recv() => {
+                if result.is_err() {
+                    // channel closed, continue with interval-only mode
+                    continue;
+                }
+                // 立即推送客户端变更通知
+                let clients = state.connected_clients().await;
+                let msg = serde_json::json!({
+                    "type": "client_change",
+                    "online_clients": clients,
+                });
+                if socket.send(Message::Text(msg.to_string())).await.is_err() {
+                    break;
+                }
+            }
         }
     }
 }
@@ -88,6 +108,7 @@ async fn build_status_message(state: &AppState) -> String {
         "type": "status",
         "proxies": proxy_summaries,
         "online_clients": clients.len(),
+        "online_client_ids": clients,
     });
 
     msg.to_string()

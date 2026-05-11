@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- 客户端上线即时显示 — 客户端连接认证后立即在管理面板显示在线状态，不再需要先创建代理规则
+- 创建/编辑代理规则时客户端 ID 从手动输入改为下拉选择在线客户端，防止输入错误
+- 客户端列表页在线客户端新增"创建规则"快捷按钮
+- WebSocket 新增 `client_change` 事件类型，客户端上线/下线时立即推送通知而非等待下次轮询
+- `AppState` 新增 `broadcast` 通道，客户端列表变更时立即通知所有 WebSocket 连接
+
+### Changed
+
+- `GET /api/clients` 返回结果合并数据库已知客户端与在线客户端列表，仅在线但无代理规则的客户端也会显示
+- WebSocket 状态推送消息新增 `online_client_ids` 字段，包含在线客户端 ID 列表
+
 ### Fixed
 
 - 编辑代理规则时仅修改 `local_addr` 而 `remote_port` 不变导致报错 (#3)

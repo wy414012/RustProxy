@@ -554,15 +554,28 @@ async fn delete_proxy(
 
 async fn list_clients(State(state): State<AppState>) -> Json<ApiResponse<Vec<ClientInfo>>> {
     let connected = state.connected_clients().await;
-    let all_clients = state.proxy_manager().list_client_ids().await;
+    let all_client_ids = state.proxy_manager().list_client_ids().await;
 
-    let clients: Vec<ClientInfo> = all_clients
-        .into_iter()
-        .map(|id| ClientInfo {
-            id: id.clone(),
-            online: connected.contains(&id),
-        })
-        .collect();
+    // 合并：先加入数据库中已知的客户端，再加入仅在线但无规则的客户端
+    let mut seen = std::collections::HashSet::new();
+    let mut clients: Vec<ClientInfo> = Vec::new();
+
+    // 数据库中已知客户端（有代理规则的）
+    for id in all_client_ids {
+        let online = connected.contains(&id);
+        seen.insert(id.clone());
+        clients.push(ClientInfo { id, online });
+    }
+
+    // 在线但尚无代理规则的客户端
+    for id in connected {
+        if seen.insert(id.clone()) {
+            clients.push(ClientInfo { id, online: true });
+        }
+    }
+
+    // 排序：在线优先，然后按 ID 字母序
+    clients.sort_by(|a, b| b.online.cmp(&a.online).then(a.id.cmp(&b.id)));
 
     ApiResponse::success(clients)
 }
