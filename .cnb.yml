@@ -8,6 +8,22 @@ $:
       services:
         - vscode
         - docker
+      imports: https://cnb.cool/emchaye/envkey/-/blob/main/.env.git.yml
+      stages:
+        - name: 配置 Git 全局信息
+          script: |
+            git config --global user.name "$GITHUB_USER"
+            git config --global user.email "$GITHUB_EMAIL"
+            git config --global credential.helper store
+            echo "https://$GITHUB_USER:$GITHUB_TOKEN@github.com" > ~/.git-credentials
+            chmod 600 ~/.git-credentials
+        - name: 配置 SSH 私钥
+          script: |
+            mkdir -p ~/.ssh
+            echo "$PRIVATE_KEY" | base64 -d > ~/.ssh/id_ed25519
+            chmod 600 ~/.ssh/id_ed25519
+            echo "StrictHostKeyChecking no" >> ~/.ssh/config
+            echo "UserKnownHostsFile /dev/null" >> ~/.ssh/config 
   push:
     - docker:
         # rust 1.93.0
