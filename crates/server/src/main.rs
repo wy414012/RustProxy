@@ -105,7 +105,7 @@ async fn main() -> Result<()> {
     tracing::info!("TLS 证书已就绪");
 
     // 初始化共享状态（带数据库）
-    let app_state = AppState::with_db(config.clone(), &db_path)?;
+    let app_state = AppState::with_db(config.clone(), &db_path).await?;
 
     // 从数据库加载已有代理规则到内存运行时状态
     app_state.proxy_manager().load_from_db().await;

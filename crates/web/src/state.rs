@@ -62,9 +62,9 @@ impl std::fmt::Debug for AppState {
 
 impl AppState {
     /// 创建新的应用状态
-    pub fn new(config: ServerConfig) -> Self {
+    pub async fn new(config: ServerConfig) -> Self {
         let (client_change_tx, _) = broadcast::channel(16);
-        let proxy_manager = ProxyManager::new();
+        let proxy_manager = ProxyManager::new().await;
         Self {
             inner: Arc::new(AppStateInner {
                 server_config: RwLock::new(config),
@@ -80,9 +80,9 @@ impl AppState {
     }
 
     /// 创建带数据库的应用状态
-    pub fn with_db(config: ServerConfig, db_path: &str) -> anyhow::Result<Self> {
+    pub async fn with_db(config: ServerConfig, db_path: &str) -> anyhow::Result<Self> {
         let (client_change_tx, _) = broadcast::channel(16);
-        let proxy_manager = ProxyManager::open(db_path)?;
+        let proxy_manager = ProxyManager::open(db_path).await?;
         Ok(Self {
             inner: Arc::new(AppStateInner {
                 server_config: RwLock::new(config),

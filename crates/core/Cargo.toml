@@ -21,7 +21,7 @@ rustls = { workspace = true }
 rcgen = { workspace = true }
 rustls-pemfile = { workspace = true }
 pem = { workspace = true }
-rusqlite = { workspace = true }
+sqlx = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

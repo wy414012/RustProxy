@@ -5,11 +5,13 @@
 //! 客户端每次启动从服务端拉取规则，无需本地存储。
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use rusqlite::params;
-use tokio::sync::{Mutex, RwLock};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::SqlitePool;
+use tokio::sync::RwLock;
 
 use crate::config::{ProxyRule, ProxyType};
 
@@ -50,8 +52,8 @@ pub struct ProxyEntry {
 /// 代理管理器（SQLite 持久化 + 内存运行时状态）
 #[derive(Clone)]
 pub struct ProxyManager {
-    /// SQLite 连接（Mutex 保护，因为 rusqlite::Connection 不是 Sync）
-    db: Arc<Mutex<rusqlite::Connection>>,
+    /// SQLite 异步连接池
+    pool: SqlitePool,
     /// 运行时状态（不持久化，重启后重置）
     runtime: Arc<RwLock<HashMap<String, RuntimeState>>>,
 }
@@ -97,41 +99,87 @@ impl std::fmt::Debug for ProxyManager {
     }
 }
 
+/// 数据库行结构（与 proxy_rules 表对应）
+#[derive(sqlx::FromRow)]
+struct ProxyRuleRow {
+    name: String,
+    proxy_type: String,
+    client_id: String,
+    local_ip: String,
+    local_port: u16,
+    remote_port: u16,
+    custom_domains: String,
+    proxy_protocol: String,
+}
+
+impl From<ProxyRuleRow> for ProxyRule {
+    fn from(row: ProxyRuleRow) -> Self {
+        let custom_domains: Vec<String> =
+            serde_json::from_str(&row.custom_domains).unwrap_or_default();
+        let proxy_type = parse_proxy_type(&row.proxy_type);
+        ProxyRule {
+            name: row.name,
+            proxy_type,
+            client_id: row.client_id,
+            local_ip: row.local_ip,
+            local_port: row.local_port,
+            remote_port: row.remote_port,
+            custom_domains,
+            proxy_protocol: row.proxy_protocol,
+        }
+    }
+}
+
 impl ProxyManager {
     /// 创建内存数据库的代理管理器（仅用于测试）
-    pub fn new() -> Self {
-        let db = rusqlite::Connection::open_in_memory().expect("创建内存数据库失败");
-        db.execute_batch(
-            "CREATE TABLE IF NOT EXISTS proxy_rules (
-                name        TEXT PRIMARY KEY,
-                proxy_type  TEXT NOT NULL,
-                client_id   TEXT NOT NULL,
-                local_ip    TEXT NOT NULL,
-                local_port  INTEGER NOT NULL,
-                remote_port INTEGER NOT NULL DEFAULT 0,
-                custom_domains TEXT NOT NULL DEFAULT '[]',
-                proxy_protocol TEXT NOT NULL DEFAULT ''
-            );
+    pub async fn new() -> Self {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("创建内存数据库失败");
 
-            CREATE INDEX IF NOT EXISTS idx_proxy_rules_client_id ON proxy_rules(client_id);
-            ",
-        )
-        .expect("初始化数据库表失败");
+        Self::init_tables(&pool).await.expect("初始化数据库表失败");
 
         Self {
-            db: Arc::new(Mutex::new(db)),
+            pool,
             runtime: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
     /// 打开 SQLite 数据库文件
-    pub fn open(db_path: &str) -> anyhow::Result<Self> {
+    pub async fn open(db_path: &str) -> anyhow::Result<Self> {
         // 确保数据库目录存在
         if let Some(parent) = std::path::Path::new(db_path).parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let db = rusqlite::Connection::open(db_path)?;
-        db.execute_batch(
+
+        // 如果文件不存在，先创建空文件以确保 sqlx 能正常打开
+        if !std::path::Path::new(db_path).exists() {
+            std::fs::File::create(db_path)?;
+        }
+
+        let options = SqliteConnectOptions::from_str(db_path)?
+            .create_if_missing(true)
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(options)
+            .await?;
+
+        Self::init_tables(&pool).await?;
+
+        tracing::info!("数据库已打开: {}", db_path);
+        Ok(Self {
+            pool,
+            runtime: Arc::new(RwLock::new(HashMap::new())),
+        })
+    }
+
+    /// 初始化数据库表结构
+    async fn init_tables(pool: &SqlitePool) -> anyhow::Result<()> {
+        sqlx::query(
             "CREATE TABLE IF NOT EXISTS proxy_rules (
                 name        TEXT PRIMARY KEY,
                 proxy_type  TEXT NOT NULL,
@@ -141,22 +189,25 @@ impl ProxyManager {
                 remote_port INTEGER NOT NULL DEFAULT 0,
                 custom_domains TEXT NOT NULL DEFAULT '[]',
                 proxy_protocol TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_proxy_rules_client_id ON proxy_rules(client_id);
-
-            -- 为旧版本数据库迁移添加 proxy_protocol 列
-            ALTER TABLE proxy_rules ADD COLUMN proxy_protocol TEXT NOT NULL DEFAULT '';
-            ",
+            )",
         )
-        // ALTER TABLE 在列已存在时会报错，忽略此错误
-        .or_else(|_| -> anyhow::Result<()> { Ok(()) })?;
+        .execute(pool)
+        .await?;
 
-        tracing::info!("数据库已打开: {}", db_path);
-        Ok(Self {
-            db: Arc::new(Mutex::new(db)),
-            runtime: Arc::new(RwLock::new(HashMap::new())),
-        })
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_proxy_rules_client_id ON proxy_rules(client_id)",
+        )
+        .execute(pool)
+        .await?;
+
+        // 为旧版本数据库迁移添加 proxy_protocol 列
+        let _ = sqlx::query(
+            "ALTER TABLE proxy_rules ADD COLUMN proxy_protocol TEXT NOT NULL DEFAULT ''",
+        )
+        .execute(pool)
+        .await;
+
+        Ok(())
     }
 
     /// 添加代理规则（持久化到数据库）
@@ -172,27 +223,24 @@ impl ProxyManager {
         // 持久化到数据库
         let domains_json =
             serde_json::to_string(&rule.custom_domains).unwrap_or_else(|_| "[]".to_string());
-        {
-            let db = self.db.lock().await;
-            db.execute(
-                "INSERT INTO proxy_rules (name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    rule.name,
-                    rule.proxy_type.as_str(),
-                    rule.client_id,
-                    rule.local_ip,
-                    rule.local_port,
-                    rule.remote_port,
-                    domains_json,
-                    rule.proxy_protocol,
-                ],
-            )
-            .map_err(|e| {
-                tracing::error!("数据库写入内部错误: {}", e);
-                "数据库写入失败".to_string()
-            })?;
-        }
+        sqlx::query(
+            "INSERT INTO proxy_rules (name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(&rule.name)
+        .bind(rule.proxy_type.as_str())
+        .bind(&rule.client_id)
+        .bind(&rule.local_ip)
+        .bind(rule.local_port)
+        .bind(rule.remote_port)
+        .bind(&domains_json)
+        .bind(&rule.proxy_protocol)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("数据库写入内部错误: {}", e);
+            "数据库写入失败".to_string()
+        })?;
 
         // 更新内存状态
         {
@@ -218,14 +266,14 @@ impl ProxyManager {
             .map_err(|_| "代理规则不存在".to_string())?;
 
         // 从数据库删除
-        {
-            let db = self.db.lock().await;
-            db.execute("DELETE FROM proxy_rules WHERE name = ?1", params![name])
-                .map_err(|e| {
-                    tracing::error!("数据库删除内部错误: {}", e);
-                    "数据库删除失败".to_string()
-                })?;
-        }
+        sqlx::query("DELETE FROM proxy_rules WHERE name = ?1")
+            .bind(name)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| {
+                tracing::error!("数据库删除内部错误: {}", e);
+                "数据库删除失败".to_string()
+            })?;
 
         // 更新内存状态
         {
@@ -242,28 +290,25 @@ impl ProxyManager {
         let domains_json =
             serde_json::to_string(&new_rule.custom_domains).unwrap_or_else(|_| "[]".to_string());
 
-        let rows = {
-            let db = self.db.lock().await;
-            db.execute(
-                "UPDATE proxy_rules SET proxy_type=?2, client_id=?3, local_ip=?4, local_port=?5, remote_port=?6, custom_domains=?7, proxy_protocol=?8 WHERE name=?1",
-                params![
-                    name,
-                    new_rule.proxy_type.as_str(),
-                    new_rule.client_id,
-                    new_rule.local_ip,
-                    new_rule.local_port,
-                    new_rule.remote_port,
-                    domains_json,
-                    new_rule.proxy_protocol,
-                ],
-            )
-            .map_err(|e| {
-                tracing::error!("数据库更新内部错误: {}", e);
-                "数据库更新失败".to_string()
-            })?
-        };
+        let result = sqlx::query(
+            "UPDATE proxy_rules SET proxy_type=?2, client_id=?3, local_ip=?4, local_port=?5, remote_port=?6, custom_domains=?7, proxy_protocol=?8 WHERE name=?1",
+        )
+        .bind(name)
+        .bind(new_rule.proxy_type.as_str())
+        .bind(&new_rule.client_id)
+        .bind(&new_rule.local_ip)
+        .bind(new_rule.local_port)
+        .bind(new_rule.remote_port)
+        .bind(&domains_json)
+        .bind(&new_rule.proxy_protocol)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("数据库更新内部错误: {}", e);
+            "数据库更新失败".to_string()
+        })?;
 
-        if rows == 0 {
+        if result.rows_affected() == 0 {
             return Err(format!("代理规则不存在: {}", name));
         }
 
@@ -330,19 +375,11 @@ impl ProxyManager {
 
     /// 获取所有已注册的客户端 ID 列表
     pub async fn list_client_ids(&self) -> Vec<String> {
-        let db = self.db.lock().await;
-        let mut stmt = match db.prepare("SELECT DISTINCT client_id FROM proxy_rules") {
-            Ok(s) => s,
-            Err(_) => return vec![],
-        };
-
-        let result = match stmt.query_map([], |row| row.get(0)) {
-            Ok(rows) => rows
-                .filter_map(|r: std::result::Result<String, _>| r.ok())
-                .collect(),
-            Err(_) => vec![],
-        };
-        result
+        let rows: Vec<(String,)> = sqlx::query_as("SELECT DISTINCT client_id FROM proxy_rules")
+            .fetch_all(&self.pool)
+            .await
+            .unwrap_or_default();
+        rows.into_iter().map(|(s,)| s).collect()
     }
 
     /// 更新代理规则状态（仅内存）
@@ -417,128 +454,46 @@ impl ProxyManager {
     // ============================================================
 
     async fn query_rule(&self, name: &str) -> Result<ProxyRule, String> {
-        let db = self.db.lock().await;
-        let mut stmt = db
-            .prepare("SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol FROM proxy_rules WHERE name = ?1")
-            .map_err(|e| {
-                tracing::error!("数据库查询内部错误: {}", e);
-                "数据库查询失败".to_string()
-            })?;
+        let row: ProxyRuleRow = sqlx::query_as(
+            "SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol FROM proxy_rules WHERE name = ?1",
+        )
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_| "代理规则不存在".to_string())?;
 
-        stmt.query_row(params![name], |row| {
-            let name: String = row.get(0)?;
-            let proxy_type_str: String = row.get(1)?;
-            let client_id: String = row.get(2)?;
-            let local_ip: String = row.get(3)?;
-            let local_port: u16 = row.get(4)?;
-            let remote_port: u16 = row.get(5)?;
-            let domains_json: String = row.get(6)?;
-            let proxy_protocol: String = row.get(7)?;
-
-            let proxy_type = parse_proxy_type(&proxy_type_str);
-            let custom_domains: Vec<String> =
-                serde_json::from_str(&domains_json).unwrap_or_default();
-
-            Ok(ProxyRule {
-                name,
-                proxy_type,
-                client_id,
-                local_ip,
-                local_port,
-                remote_port,
-                custom_domains,
-                proxy_protocol,
-            })
-        })
-        .map_err(|_| "代理规则不存在".to_string())
+        Ok(row.into())
     }
 
     async fn query_all_rules(&self) -> Vec<ProxyRule> {
-        let db = self.db.lock().await;
-        let mut stmt = match db.prepare(
+        let rows: Vec<ProxyRuleRow> = sqlx::query_as(
             "SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol FROM proxy_rules",
-        ) {
-            Ok(s) => s,
-            Err(_) => return vec![],
-        };
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
 
-        let rows = match stmt.query_map([], |row| {
-            let name: String = row.get(0)?;
-            let proxy_type_str: String = row.get(1)?;
-            let client_id: String = row.get(2)?;
-            let local_ip: String = row.get(3)?;
-            let local_port: u16 = row.get(4)?;
-            let remote_port: u16 = row.get(5)?;
-            let domains_json: String = row.get(6)?;
-            let proxy_protocol: String = row.get(7)?;
-
-            let proxy_type = parse_proxy_type(&proxy_type_str);
-            let custom_domains: Vec<String> =
-                serde_json::from_str(&domains_json).unwrap_or_default();
-
-            Ok(ProxyRule {
-                name,
-                proxy_type,
-                client_id,
-                local_ip,
-                local_port,
-                remote_port,
-                custom_domains,
-                proxy_protocol,
-            })
-        }) {
-            Ok(r) => r,
-            Err(_) => return vec![],
-        };
-
-        rows.filter_map(|r| r.ok()).collect()
+        rows.into_iter().map(|r| r.into()).collect()
     }
 
     async fn query_rules_by_client(&self, client_id: &str) -> Vec<ProxyRule> {
-        let db = self.db.lock().await;
-        let mut stmt = match db.prepare(
+        let rows: Vec<ProxyRuleRow> = sqlx::query_as(
             "SELECT name, proxy_type, client_id, local_ip, local_port, remote_port, custom_domains, proxy_protocol FROM proxy_rules WHERE client_id = ?1",
-        ) {
-            Ok(s) => s,
-            Err(_) => return vec![],
-        };
+        )
+        .bind(client_id)
+        .fetch_all(&self.pool)
+        .await
+        .unwrap_or_default();
 
-        let rows = match stmt.query_map(params![client_id], |row| {
-            let name: String = row.get(0)?;
-            let proxy_type_str: String = row.get(1)?;
-            let client_id: String = row.get(2)?;
-            let local_ip: String = row.get(3)?;
-            let local_port: u16 = row.get(4)?;
-            let remote_port: u16 = row.get(5)?;
-            let domains_json: String = row.get(6)?;
-            let proxy_protocol: String = row.get(7)?;
-
-            let proxy_type = parse_proxy_type(&proxy_type_str);
-            let custom_domains: Vec<String> =
-                serde_json::from_str(&domains_json).unwrap_or_default();
-
-            Ok(ProxyRule {
-                name,
-                proxy_type,
-                client_id,
-                local_ip,
-                local_port,
-                remote_port,
-                custom_domains,
-                proxy_protocol,
-            })
-        }) {
-            Ok(r) => r,
-            Err(_) => return vec![],
-        };
-
-        rows.filter_map(|r| r.ok()).collect()
+        rows.into_iter().map(|r| r.into()).collect()
     }
 }
 
 impl Default for ProxyManager {
     fn default() -> Self {
-        Self::new()
+        // 注意：Default 实现不能是异步的，这里使用 block_on
+        let rt = tokio::runtime::Runtime::new().expect("创建 tokio runtime 失败");
+        rt.block_on(Self::new())
     }
 }
 
@@ -556,9 +511,9 @@ fn parse_proxy_type(s: &str) -> ProxyType {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_add_and_get_proxy() {
-        let mgr = ProxyManager::new();
+    #[tokio::test]
+    async fn test_add_and_get_proxy() {
+        let mgr = ProxyManager::new().await;
 
         let rule = ProxyRule {
             name: "test-ssh".to_string(),
@@ -571,116 +526,104 @@ mod tests {
             proxy_protocol: String::new(),
         };
 
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            mgr.add_proxy(rule.clone()).await.unwrap();
-            let entry = mgr.get_proxy("test-ssh").await.unwrap();
-            assert_eq!(entry.rule.name, "test-ssh");
-            assert_eq!(entry.rule.client_id, "my-laptop");
-        });
+        mgr.add_proxy(rule.clone()).await.unwrap();
+        let entry = mgr.get_proxy("test-ssh").await.unwrap();
+        assert_eq!(entry.rule.name, "test-ssh");
+        assert_eq!(entry.rule.client_id, "my-laptop");
     }
 
-    #[test]
-    fn test_list_by_client() {
-        let mgr = ProxyManager::new();
-        let rt = tokio::runtime::Runtime::new().unwrap();
+    #[tokio::test]
+    async fn test_list_by_client() {
+        let mgr = ProxyManager::new().await;
 
-        rt.block_on(async {
-            mgr.add_proxy(ProxyRule {
-                name: "ssh".to_string(),
-                proxy_type: ProxyType::Tcp,
-                client_id: "client-a".to_string(),
-                local_ip: "127.0.0.1".to_string(),
-                local_port: 22,
-                remote_port: 6000,
-                custom_domains: vec![],
-                proxy_protocol: String::new(),
-            })
-            .await
-            .unwrap();
+        mgr.add_proxy(ProxyRule {
+            name: "ssh".to_string(),
+            proxy_type: ProxyType::Tcp,
+            client_id: "client-a".to_string(),
+            local_ip: "127.0.0.1".to_string(),
+            local_port: 22,
+            remote_port: 6000,
+            custom_domains: vec![],
+            proxy_protocol: String::new(),
+        })
+        .await
+        .unwrap();
 
-            mgr.add_proxy(ProxyRule {
-                name: "web".to_string(),
-                proxy_type: ProxyType::Http,
-                client_id: "client-b".to_string(),
-                local_ip: "127.0.0.1".to_string(),
-                local_port: 80,
-                remote_port: 0,
-                custom_domains: vec!["example.com".to_string()],
-                proxy_protocol: String::new(),
-            })
-            .await
-            .unwrap();
+        mgr.add_proxy(ProxyRule {
+            name: "web".to_string(),
+            proxy_type: ProxyType::Http,
+            client_id: "client-b".to_string(),
+            local_ip: "127.0.0.1".to_string(),
+            local_port: 80,
+            remote_port: 0,
+            custom_domains: vec!["example.com".to_string()],
+            proxy_protocol: String::new(),
+        })
+        .await
+        .unwrap();
 
-            let list_a = mgr.list_proxies_by_client("client-a").await;
-            assert_eq!(list_a.len(), 1);
-            assert_eq!(list_a[0].rule.name, "ssh");
+        let list_a = mgr.list_proxies_by_client("client-a").await;
+        assert_eq!(list_a.len(), 1);
+        assert_eq!(list_a[0].rule.name, "ssh");
 
-            let list_b = mgr.list_proxies_by_client("client-b").await;
-            assert_eq!(list_b.len(), 1);
-            assert_eq!(list_b[0].rule.custom_domains, vec!["example.com"]);
-        });
+        let list_b = mgr.list_proxies_by_client("client-b").await;
+        assert_eq!(list_b.len(), 1);
+        assert_eq!(list_b[0].rule.custom_domains, vec!["example.com"]);
     }
 
-    #[test]
-    fn test_remove_proxy() {
-        let mgr = ProxyManager::new();
-        let rt = tokio::runtime::Runtime::new().unwrap();
+    #[tokio::test]
+    async fn test_remove_proxy() {
+        let mgr = ProxyManager::new().await;
 
-        rt.block_on(async {
-            mgr.add_proxy(ProxyRule {
-                name: "test".to_string(),
-                proxy_type: ProxyType::Tcp,
-                client_id: "c1".to_string(),
-                local_ip: "127.0.0.1".to_string(),
-                local_port: 22,
-                remote_port: 6000,
-                custom_domains: vec![],
-                proxy_protocol: String::new(),
-            })
-            .await
-            .unwrap();
+        mgr.add_proxy(ProxyRule {
+            name: "test".to_string(),
+            proxy_type: ProxyType::Tcp,
+            client_id: "c1".to_string(),
+            local_ip: "127.0.0.1".to_string(),
+            local_port: 22,
+            remote_port: 6000,
+            custom_domains: vec![],
+            proxy_protocol: String::new(),
+        })
+        .await
+        .unwrap();
 
-            let removed = mgr.remove_proxy("test").await.unwrap();
-            assert_eq!(removed.name, "test");
+        let removed = mgr.remove_proxy("test").await.unwrap();
+        assert_eq!(removed.name, "test");
 
-            assert!(mgr.get_proxy("test").await.is_none());
-        });
+        assert!(mgr.get_proxy("test").await.is_none());
     }
 
-    #[test]
-    fn test_duplicate_name() {
-        let mgr = ProxyManager::new();
-        let rt = tokio::runtime::Runtime::new().unwrap();
+    #[tokio::test]
+    async fn test_duplicate_name() {
+        let mgr = ProxyManager::new().await;
 
-        rt.block_on(async {
-            mgr.add_proxy(ProxyRule {
+        mgr.add_proxy(ProxyRule {
+            name: "dup".to_string(),
+            proxy_type: ProxyType::Tcp,
+            client_id: "c1".to_string(),
+            local_ip: "127.0.0.1".to_string(),
+            local_port: 22,
+            remote_port: 6000,
+            custom_domains: vec![],
+            proxy_protocol: String::new(),
+        })
+        .await
+        .unwrap();
+
+        let result = mgr
+            .add_proxy(ProxyRule {
                 name: "dup".to_string(),
-                proxy_type: ProxyType::Tcp,
-                client_id: "c1".to_string(),
+                proxy_type: ProxyType::Udp,
+                client_id: "c2".to_string(),
                 local_ip: "127.0.0.1".to_string(),
-                local_port: 22,
-                remote_port: 6000,
+                local_port: 53,
+                remote_port: 6001,
                 custom_domains: vec![],
                 proxy_protocol: String::new(),
             })
-            .await
-            .unwrap();
-
-            let result = mgr
-                .add_proxy(ProxyRule {
-                    name: "dup".to_string(),
-                    proxy_type: ProxyType::Udp,
-                    client_id: "c2".to_string(),
-                    local_ip: "127.0.0.1".to_string(),
-                    local_port: 53,
-                    remote_port: 6001,
-                    custom_domains: vec![],
-                    proxy_protocol: String::new(),
-                })
-                .await;
-            assert!(result.is_err());
-        });
+            .await;
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -691,7 +634,7 @@ mod tests {
 
         // 写入数据
         {
-            let mgr = ProxyManager::open(&db_path_str).unwrap();
+            let mgr = ProxyManager::open(&db_path_str).await.unwrap();
             mgr.add_proxy(ProxyRule {
                 name: "persistent-rule".to_string(),
                 proxy_type: ProxyType::Tcp,
@@ -708,7 +651,7 @@ mod tests {
 
         // 重新打开数据库，数据应该还在
         {
-            let mgr = ProxyManager::open(&db_path_str).unwrap();
+            let mgr = ProxyManager::open(&db_path_str).await.unwrap();
             let proxies = mgr.list_proxies().await;
             assert_eq!(proxies.len(), 1);
             assert_eq!(proxies[0].rule.name, "persistent-rule");

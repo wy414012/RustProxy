@@ -46,7 +46,7 @@ rustls-pemfile = "2"
 pem = { version = "3", features = ["std"] }
 
 # Database
-rusqlite = { version = "0.31", features = ["bundled"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive"] }
 
 # Web (server only)
 axum = { version = "0.7", features = ["ws"] }
