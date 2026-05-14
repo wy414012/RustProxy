@@ -5,109 +5,405 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>RustProxy 管理面板</title>
 <style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0f1117;--surface:#1a1d27;--surface2:#242838;--border:#2e3348;--primary:#6c5ce7;--primary-hover:#7c6ff7;--success:#00b894;--danger:#e74c3c;--danger-hover:#c0392b;--warn:#fdcb6e;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--radius:8px}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
-a{color:var(--primary);text-decoration:none}
 
-/* Login */
-.login-wrap{display:flex;align-items:center;justify-content:center;min-height:100vh}
-.login-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:40px;width:380px}
-.login-card h1{text-align:center;margin-bottom:8px;font-size:22px}
-.login-card p{text-align:center;color:var(--text2);margin-bottom:28px;font-size:14px}
+:root{
+  --bg:#0a0e1a;
+  --bg2:#0f1424;
+  --surface:rgba(15,20,40,0.75);
+  --surface-solid:#111832;
+  --surface2:rgba(22,30,56,0.8);
+  --border:rgba(56,78,126,0.35);
+  --border-light:rgba(56,78,126,0.18);
+  --primary:#00d4aa;
+  --primary2:#00b4d8;
+  --primary-dim:rgba(0,212,170,0.12);
+  --primary-glow:rgba(0,212,170,0.25);
+  --danger:#ff4757;
+  --danger-dim:rgba(255,71,87,0.12);
+  --warn:#ffa502;
+  --warn-dim:rgba(255,165,2,0.12);
+  --success:#00d4aa;
+  --text:#e8ecf4;
+  --text2:#8b95a8;
+  --text3:#4e5a70;
+  --radius:10px;
+  --radius-lg:14px;
+  --font:'Outfit',system-ui,-apple-system,sans-serif;
+  --mono:'JetBrains Mono','SF Mono','Cascadia Code',monospace;
+  --shadow:0 4px 24px rgba(0,0,0,0.3);
+  --shadow-lg:0 8px 40px rgba(0,0,0,0.4);
+}
 
-/* Layout */
+html{scroll-behavior:smooth}
+
+body{
+  font-family:var(--font);
+  background:var(--bg);
+  color:var(--text);
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+
+/* =========== LOGIN =========== */
+.login-wrap{
+  display:flex;align-items:center;justify-content:center;min-height:100vh;
+  background:var(--bg);
+  position:relative;overflow:hidden;
+}
+.login-wrap::before{
+  content:'';position:absolute;inset:0;
+  background:
+    radial-gradient(ellipse 600px 400px at 20% 50%, rgba(0,212,170,0.08), transparent),
+    radial-gradient(ellipse 500px 500px at 80% 30%, rgba(0,180,216,0.06), transparent);
+}
+.login-wrap::after{
+  content:'';position:absolute;inset:0;opacity:0.03;
+  background-image:url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+
+.login-card{
+  position:relative;z-index:1;
+  background:var(--surface);
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  padding:44px 40px;
+  width:400px;
+  box-shadow:var(--shadow-lg),0 0 80px rgba(0,212,170,0.04);
+  animation:loginIn .6s cubic-bezier(.16,1,.3,1) both;
+}
+@keyframes loginIn{from{opacity:0;transform:translateY(20px) scale(0.97)}}
+
+.login-logo{
+  display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:8px;
+}
+.login-logo svg{width:36px;height:36px}
+.login-logo span{font-size:26px;font-weight:700;letter-spacing:-0.5px}
+.login-logo .rust{color:var(--text)}
+.login-logo .proxy{color:var(--primary)}
+
+.login-subtitle{
+  text-align:center;color:var(--text3);margin-bottom:32px;font-size:14px;font-weight:400;letter-spacing:0.3px;
+}
+
+/* =========== LAYOUT =========== */
 .app{display:flex;min-height:100vh}
-.sidebar{width:220px;background:var(--surface);border-right:1px solid var(--border);padding:20px 0;flex-shrink:0}
-.sidebar .logo{padding:0 20px 20px;font-size:18px;font-weight:700;border-bottom:1px solid var(--border);margin-bottom:12px}
-.sidebar .logo span{color:var(--primary)}
-.sidebar nav a{display:flex;align-items:center;gap:10px;padding:10px 20px;color:var(--text2);font-size:14px;transition:all .2s;border-left:3px solid transparent}
-.sidebar nav a:hover{background:var(--surface2);color:var(--text)}
-.sidebar nav a.active{color:var(--primary);background:var(--surface2);border-left-color:var(--primary)}
-.main{flex:1;padding:28px 32px;overflow-y:auto}
 
-/* Form */
+.sidebar{
+  width:240px;flex-shrink:0;
+  background:linear-gradient(180deg,#0c1020 0%,#0e1328 100%);
+  border-right:1px solid var(--border-light);
+  display:flex;flex-direction:column;
+  position:relative;z-index:10;
+}
+
+.sidebar-header{
+  padding:24px 20px 20px;
+  border-bottom:1px solid var(--border-light);
+}
+.sidebar-logo{display:flex;align-items:center;gap:10px}
+.sidebar-logo svg{width:28px;height:28px;flex-shrink:0}
+.sidebar-logo .name{font-size:18px;font-weight:700;letter-spacing:-0.3px}
+.sidebar-logo .name .rust{color:var(--text)}
+.sidebar-logo .name .proxy{color:var(--primary)}
+
+.sidebar nav{flex:1;padding:12px 10px}
+.sidebar nav a{
+  display:flex;align-items:center;gap:11px;
+  padding:10px 14px;margin-bottom:2px;
+  color:var(--text2);font-size:14px;font-weight:500;
+  border-radius:var(--radius);
+  transition:all .2s ease;
+  position:relative;
+}
+.sidebar nav a svg{width:18px;height:18px;flex-shrink:0;opacity:0.6;transition:opacity .2s}
+.sidebar nav a:hover{color:var(--text);background:var(--surface2)}
+.sidebar nav a:hover svg{opacity:1}
+.sidebar nav a.active{
+  color:var(--primary);background:var(--primary-dim);
+}
+.sidebar nav a.active svg{opacity:1;color:var(--primary)}
+.sidebar nav a.active::before{
+  content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:3px;height:20px;border-radius:0 3px 3px 0;
+  background:var(--primary);
+}
+
+.sidebar-footer{
+  padding:16px 10px;
+  border-top:1px solid var(--border-light);
+}
+.sidebar-footer a{
+  display:flex;align-items:center;gap:11px;
+  padding:10px 14px;
+  color:var(--text3);font-size:13px;font-weight:500;
+  border-radius:var(--radius);transition:all .2s ease;
+}
+.sidebar-footer a:hover{color:var(--danger);background:var(--danger-dim)}
+.sidebar-footer a svg{width:18px;height:18px;flex-shrink:0}
+
+.main{
+  flex:1;padding:28px 36px;overflow-y:auto;
+  background:var(--bg);
+  position:relative;
+}
+.main::before{
+  content:'';position:fixed;top:0;right:0;width:600px;height:600px;
+  background:radial-gradient(circle,rgba(0,212,170,0.03),transparent 70%);
+  pointer-events:none;z-index:0;
+}
+
+.page-title{
+  font-size:24px;font-weight:700;margin-bottom:28px;letter-spacing:-0.3px;
+  position:relative;z-index:1;
+}
+
+/* =========== FORM =========== */
 .form-group{margin-bottom:18px}
-.form-group label{display:block;font-size:13px;color:var(--text2);margin-bottom:6px;font-weight:500}
-.form-group input,.form-group select{width:100%;padding:9px 12px;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:14px;outline:none;transition:border .2s}
-.form-group input:focus,.form-group select:focus{border-color:var(--primary)}
-.form-group select option{background:var(--surface);color:var(--text)}
+.form-group label{
+  display:block;font-size:12px;color:var(--text2);
+  margin-bottom:7px;font-weight:600;
+  text-transform:uppercase;letter-spacing:0.5px;
+}
+.form-group input,.form-group select{
+  width:100%;padding:10px 14px;
+  background:var(--bg2);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  color:var(--text);font-size:14px;font-family:var(--font);
+  outline:none;transition:all .2s;
+}
+.form-group input::placeholder{color:var(--text3)}
+.form-group input:focus,.form-group select:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px var(--primary-dim);
+}
+.form-group select option{background:var(--surface-solid);color:var(--text)}
+.form-hint{font-size:11px;color:var(--text3);margin-top:4px}
 
-/* Button */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 18px;border:none;border-radius:var(--radius);font-size:14px;font-weight:500;cursor:pointer;transition:all .2s}
-.btn-primary{background:var(--primary);color:#fff}
-.btn-primary:hover{background:var(--primary-hover)}
-.btn-danger{background:var(--danger);color:#fff}
-.btn-danger:hover{background:var(--danger-hover)}
-.btn-ghost{background:transparent;color:var(--text2);border:1px solid var(--border)}
-.btn-ghost:hover{background:var(--surface2);color:var(--text)}
-.btn-sm{padding:5px 12px;font-size:12px}
-.btn-warn{background:var(--warn);color:#333}
-.btn-warn:hover{opacity:.85}
+/* =========== BUTTON =========== */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  padding:9px 20px;border:none;border-radius:var(--radius);
+  font-size:13px;font-weight:600;font-family:var(--font);
+  cursor:pointer;transition:all .2s;
+  position:relative;overflow:hidden;
+}
+.btn svg{width:16px;height:16px}
 
-/* Card */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:20px}
-.card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-.card-header h2{font-size:16px;font-weight:600}
+.btn-primary{
+  background:linear-gradient(135deg,var(--primary),var(--primary2));
+  color:#0a0e1a;
+  box-shadow:0 2px 12px rgba(0,212,170,0.2);
+}
+.btn-primary:hover{
+  box-shadow:0 4px 20px rgba(0,212,170,0.35);
+  transform:translateY(-1px);
+}
+.btn-primary:active{transform:translateY(0)}
 
-/* Stats */
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px}
-.stat-card .label{font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px}
-.stat-card .value{font-size:28px;font-weight:700}
-.stat-card .value.online{color:var(--success)}
+.btn-danger{background:var(--danger);color:#fff;box-shadow:0 2px 12px rgba(255,71,87,0.2)}
+.btn-danger:hover{box-shadow:0 4px 20px rgba(255,71,87,0.35);transform:translateY(-1px)}
+
+.btn-ghost{
+  background:transparent;color:var(--text2);
+  border:1px solid var(--border);
+}
+.btn-ghost:hover{background:var(--surface2);color:var(--text);border-color:var(--text3)}
+
+.btn-sm{padding:6px 14px;font-size:12px}
+
+.btn-warn{background:var(--warn);color:#1a1a1a;font-weight:700}
+.btn-warn:hover{opacity:.9;transform:translateY(-1px)}
+
+/* =========== CARD =========== */
+.card{
+  background:var(--surface);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  padding:24px;margin-bottom:24px;
+  box-shadow:var(--shadow);
+  position:relative;z-index:1;
+}
+.card-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:18px;
+}
+.card-header h2{font-size:15px;font-weight:600;letter-spacing:-0.2px}
+
+/* =========== STATS =========== */
+.stats{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+  gap:16px;margin-bottom:28px;
+  position:relative;z-index:1;
+}
+.stat-card{
+  background:var(--surface);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  padding:22px 24px;
+  position:relative;overflow:hidden;
+  box-shadow:var(--shadow);
+  transition:border-color .3s;
+}
+.stat-card:hover{border-color:rgba(0,212,170,0.25)}
+.stat-card::after{
+  content:'';position:absolute;top:0;right:0;width:80px;height:80px;
+  border-radius:50%;filter:blur(30px);opacity:0.15;
+  pointer-events:none;
+}
+.stat-card:nth-child(1)::after{background:var(--primary)}
+.stat-card:nth-child(2)::after{background:var(--primary2)}
+.stat-card:nth-child(3)::after{background:var(--warn)}
+.stat-card:nth-child(4)::after{background:var(--primary)}
+
+.stat-card .stat-icon{
+  width:40px;height:40px;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;
+  margin-bottom:14px;
+}
+.stat-card .stat-icon svg{width:20px;height:20px}
+.stat-card:nth-child(1) .stat-icon{background:var(--primary-dim);color:var(--primary)}
+.stat-card:nth-child(2) .stat-icon{background:rgba(0,180,216,0.12);color:var(--primary2)}
+.stat-card:nth-child(3) .stat-icon{background:var(--warn-dim);color:var(--warn)}
+.stat-card:nth-child(4) .stat-icon{background:var(--primary-dim);color:var(--primary)}
+
+.stat-card .label{
+  font-size:11px;color:var(--text3);text-transform:uppercase;
+  letter-spacing:0.8px;font-weight:600;margin-bottom:6px;
+}
+.stat-card .value{font-size:30px;font-weight:700;letter-spacing:-1px}
+.stat-card .value.online{color:var(--primary)}
 .stat-card .value.offline{color:var(--text3)}
 
-/* Table */
-.table-wrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;padding:10px 12px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;font-size:11px;border-bottom:1px solid var(--border)}
-td{padding:10px 12px;border-bottom:1px solid var(--border);color:var(--text2)}
-tr:hover td{background:var(--surface2)}
+/* =========== TABLE =========== */
+.table-wrap{overflow-x:auto;margin:0 -6px;padding:0 6px}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+th{
+  text-align:left;padding:12px 14px;
+  color:var(--text3);font-weight:600;font-size:11px;
+  text-transform:uppercase;letter-spacing:0.6px;
+  border-bottom:1px solid var(--border);
+  position:sticky;top:0;background:var(--surface-solid);
+  z-index:1;
+}
+td{
+  padding:12px 14px;
+  border-bottom:1px solid var(--border-light);
+  color:var(--text2);
+  transition:background .15s;
+}
+tr:hover td{background:rgba(0,212,170,0.03)}
 td.actions{white-space:nowrap}
 
-/* Badge */
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
-.badge-online{background:rgba(0,184,148,.15);color:var(--success)}
-.badge-offline{background:rgba(100,116,139,.15);color:var(--text3)}
-.badge-tcp{background:rgba(108,92,231,.15);color:var(--primary)}
-.badge-udp{background:rgba(253,203,110,.15);color:var(--warn)}
-.badge-http{background:rgba(0,184,148,.15);color:var(--success)}
-.badge-https{background:rgba(52,152,219,.15);color:#3498db}
-.badge-starting{background:rgba(108,92,231,.15);color:var(--primary)}
-.badge-running{background:rgba(0,184,148,.15);color:var(--success)}
-.badge-stopping{background:rgba(253,203,110,.15);color:var(--warn)}
-.badge-stopped{background:rgba(100,116,139,.15);color:var(--text3)}
-.badge-error{background:rgba(231,76,60,.15);color:var(--danger)}
+/* =========== BADGE =========== */
+.badge{
+  display:inline-flex;align-items:center;
+  padding:3px 10px;border-radius:6px;
+  font-size:11px;font-weight:700;font-family:var(--mono);
+  letter-spacing:0.3px;
+}
+.badge-online{background:var(--primary-dim);color:var(--primary)}
+.badge-offline{background:rgba(78,90,112,0.2);color:var(--text3)}
+.badge-tcp{background:var(--primary-dim);color:var(--primary)}
+.badge-udp{background:var(--warn-dim);color:var(--warn)}
+.badge-http{background:rgba(0,180,216,0.12);color:var(--primary2)}
+.badge-https{background:rgba(0,180,216,0.15);color:var(--primary2)}
+.badge-starting{background:var(--primary-dim);color:var(--primary)}
+.badge-running{background:var(--primary-dim);color:var(--primary)}
+.badge-stopping{background:var(--warn-dim);color:var(--warn)}
+.badge-stopped{background:rgba(78,90,112,0.2);color:var(--text3)}
+.badge-error{background:var(--danger-dim);color:var(--danger)}
 
-/* Modal */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;opacity:0;pointer-events:none;transition:opacity .2s}
+/* =========== MODAL =========== */
+.modal-overlay{
+  position:fixed;inset:0;
+  background:rgba(5,8,18,0.7);
+  backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+  display:flex;align-items:center;justify-content:center;
+  z-index:100;
+  opacity:0;pointer-events:none;
+  transition:opacity .25s ease;
+}
 .modal-overlay.show{opacity:1;pointer-events:all}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:28px;width:480px;max-width:90vw}
-.modal h3{margin-bottom:20px;font-size:16px}
-.modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
 
-/* Toast */
-.toast{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:var(--radius);font-size:13px;z-index:200;animation:slideIn .3s ease;max-width:360px}
-.toast-success{background:var(--success);color:#fff}
+.modal{
+  background:linear-gradient(180deg,#111832,#0e1328);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  padding:32px;
+  width:520px;max-width:92vw;
+  box-shadow:var(--shadow-lg),0 0 60px rgba(0,212,170,0.05);
+  transform:translateY(10px) scale(0.98);
+  transition:transform .25s cubic-bezier(.16,1,.3,1);
+}
+.modal-overlay.show .modal{transform:translateY(0) scale(1)}
+
+.modal h3{
+  font-size:17px;font-weight:700;margin-bottom:22px;
+  display:flex;align-items:center;gap:10px;
+}
+.modal h3 svg{width:20px;height:20px;color:var(--primary)}
+.modal .actions{display:flex;gap:10px;justify-content:flex-end;margin-top:24px}
+
+/* =========== TOAST =========== */
+.toast{
+  position:fixed;top:24px;right:24px;
+  padding:14px 22px;border-radius:var(--radius);
+  font-size:13px;font-weight:500;z-index:200;
+  animation:toastIn .35s cubic-bezier(.16,1,.3,1);
+  max-width:400px;
+  box-shadow:var(--shadow-lg);
+  display:flex;align-items:center;gap:8px;
+}
+.toast svg{width:16px;height:16px;flex-shrink:0}
+.toast-success{background:var(--primary);color:#0a0e1a}
 .toast-error{background:var(--danger);color:#fff}
-@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes toastIn{from{transform:translateX(100%) scale(0.9);opacity:0}to{transform:translateX(0) scale(1);opacity:1}}
+@keyframes toastOut{from{transform:translateX(0) scale(1);opacity:1}to{transform:translateX(100%) scale(0.9);opacity:0}}
 
-/* Empty */
-.empty{text-align:center;padding:40px;color:var(--text3)}
-.empty svg{width:48px;height:48px;margin-bottom:12px;opacity:.3}
+/* =========== EMPTY =========== */
+.empty{text-align:center;padding:60px 20px;color:var(--text3)}
+.empty svg{width:56px;height:56px;margin-bottom:16px;opacity:0.2}
+.empty p{font-size:14px}
 
-/* Responsive */
-@media(max-width:768px){.sidebar{display:none}.main{padding:16px}}
+/* =========== PAGE TRANSITIONS =========== */
+.page-enter{animation:pageIn .35s cubic-bezier(.16,1,.3,1) both}
+@keyframes pageIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+/* =========== RESPONSIVE =========== */
+@media(max-width:768px){
+  .sidebar{display:none}
+  .main{padding:16px}
+  .stats{grid-template-columns:1fr 1fr}
+  .login-card{width:92vw;padding:32px 24px}
+}
+@media(max-width:480px){
+  .stats{grid-template-columns:1fr}
+}
 </style>
 </head>
 <body>
 
-<!-- Login Page -->
+<!-- ====== LOGIN ====== -->
 <div id="loginPage" class="login-wrap">
   <div class="login-card">
-    <h1>RustProxy</h1>
-    <p>内网穿透管理面板</p>
+    <div class="login-logo">
+      <svg viewBox="0 0 36 36" fill="none"><path d="M18 2L4 10v16l14 8 14-8V10L18 2z" stroke="currentColor" stroke-width="2" fill="none" class="rust"/><path d="M18 8l-8 4.5v9L18 26l8-4.5v-9L18 8z" fill="url(#lg1)" stroke="var(--primary)" stroke-width="1.5"/><defs><linearGradient id="lg1" x1="10" y1="8" x2="26" y2="26"><stop stop-color="var(--primary)" stop-opacity="0.3"/><stop offset="1" stop-color="var(--primary2)" stop-opacity="0.3"/></linearGradient></defs><circle cx="18" cy="17" r="3.5" fill="var(--primary)" opacity="0.8"/></svg>
+      <span class="name"><span class="rust">Rust</span><span class="proxy">Proxy</span></span>
+    </div>
+    <p class="login-subtitle">内网穿透管理面板</p>
     <div class="form-group">
       <label>用户名</label>
       <input type="text" id="loginUser" placeholder="admin" autocomplete="username">
@@ -116,78 +412,114 @@ td.actions{white-space:nowrap}
       <label>密码</label>
       <input type="password" id="loginPass" placeholder="password" autocomplete="current-password">
     </div>
-    <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="doLogin()">登 录</button>
-    <p id="loginError" style="color:var(--danger);font-size:13px;margin-top:12px;text-align:center;display:none"></p>
+    <button class="btn btn-primary" style="width:100%;margin-top:10px;padding:11px" onclick="doLogin()">
+      <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 011 1v12a1 1 0 11-2 0V4a1 1 0 011-1zm7.707 3.293a1 1 0 010 1.414L9.414 10l1.293 1.293a1 1 0 01-1.414 1.414l-2-2a1 1 0 010-1.414l2-2a1 1 0 011.414 0zM17 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+      登 录
+    </button>
+    <p id="loginError" style="color:var(--danger);font-size:13px;margin-top:14px;text-align:center;display:none"></p>
   </div>
 </div>
 
-<!-- App -->
+<!-- ====== APP ====== -->
 <div id="appPage" class="app" style="display:none">
+
+  <!-- Sidebar -->
   <aside class="sidebar">
-    <div class="logo">Rust<span>Proxy</span></div>
+    <div class="sidebar-header">
+      <div class="sidebar-logo">
+        <svg viewBox="0 0 36 36" fill="none"><path d="M18 2L4 10v16l14 8 14-8V10L18 2z" stroke="currentColor" stroke-width="2" fill="none" style="color:var(--text3)"/><path d="M18 8l-8 4.5v9L18 26l8-4.5v-9L18 8z" fill="url(#slg)" stroke="var(--primary)" stroke-width="1.5"/><defs><linearGradient id="slg" x1="10" y1="8" x2="26" y2="26"><stop stop-color="var(--primary)" stop-opacity="0.25"/><stop offset="1" stop-color="var(--primary2)" stop-opacity="0.25"/></linearGradient></defs><circle cx="18" cy="17" r="3.5" fill="var(--primary)" opacity="0.85"/></svg>
+        <div class="name"><span class="rust">Rust</span><span class="proxy">Proxy</span></div>
+      </div>
+    </div>
     <nav>
-      <a href="#" class="active" data-page="dashboard" onclick="navigate('dashboard',this)">仪表盘</a>
-      <a href="#" data-page="proxies" onclick="navigate('proxies',this)">代理规则</a>
-      <a href="#" data-page="clients" onclick="navigate('clients',this)">客户端</a>
-      <a href="#" onclick="doLogout()" style="margin-top:40px;color:var(--danger)">退出登录</a>
+      <a href="#" class="active" data-page="dashboard" onclick="navigate('dashboard',this)">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7A1 1 0 003 11h1v6a1 1 0 001 1h4a1 1 0 001-1v-3h2v3a1 1 0 001 1h4a1 1 0 001-1v-6h1a1 1 0 00.707-1.707l-7-7z"/></svg>
+        仪表盘
+      </a>
+      <a href="#" data-page="proxies" onclick="navigate('proxies',this)">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12 1.586l-3.293 3.293a1 1 0 101.414 1.414L12 4.414l3.293 3.293a1 1 0 001.414-1.414L13.414 3l1.293-1.293a1 1 0 00-1.414-1.414L12 1.586zM4 10a1 1 0 011-1h2a1 1 0 110 2H5a1 1 0 01-1-1zm8 0a1 1 0 011-1h2a1 1 0 110 2h-2a1 1 0 01-1-1zm-4 4a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" clip-rule="evenodd"/></svg>
+        代理规则
+      </a>
+      <a href="#" data-page="clients" onclick="navigate('clients',this)">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zm-1 4a3 3 0 110 6H8a3 3 0 110-6h4zm-8 1a2 2 0 100 4 2 2 0 000-4z"/></svg>
+        客户端
+      </a>
     </nav>
+    <div class="sidebar-footer">
+      <a href="#" onclick="doLogout()">
+        <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3 3a1 1 0 011 1v12a1 1 0 11-2 0V4a1 1 0 011-1zm7.707 3.293a1 1 0 010 1.414L9.414 10l1.293 1.293a1 1 0 01-1.414 1.414l-2-2a1 1 0 010-1.414l2-2a1 1 0 011.414 0zM17 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+        退出登录
+      </a>
+    </div>
   </aside>
+
+  <!-- Main Content -->
   <div class="main">
+
     <!-- Dashboard -->
-    <div id="page-dashboard">
-      <h1 style="margin-bottom:24px">仪表盘</h1>
+    <div id="page-dashboard" class="page-enter">
+      <h1 class="page-title">仪表盘</h1>
       <div class="stats" id="statsGrid"></div>
       <div class="card">
         <div class="card-header"><h2>最近代理</h2></div>
         <div class="table-wrap"><table id="dashProxyTable"></table></div>
       </div>
     </div>
+
     <!-- Proxies -->
     <div id="page-proxies" style="display:none">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
-        <h1>代理规则</h1>
-        <button class="btn btn-primary" onclick="showCreateModal()">+ 添加规则</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;position:relative;z-index:1">
+        <h1 class="page-title" style="margin-bottom:0">代理规则</h1>
+        <button class="btn btn-primary" onclick="showCreateModal()">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd"/></svg>
+          添加规则
+        </button>
       </div>
       <div class="card">
         <div class="table-wrap"><table id="proxyTable"></table></div>
       </div>
     </div>
+
     <!-- Clients -->
     <div id="page-clients" style="display:none">
-      <h1 style="margin-bottom:24px">客户端</h1>
+      <h1 class="page-title">客户端</h1>
       <div class="card">
         <div class="table-wrap"><table id="clientTable"></table></div>
       </div>
     </div>
+
   </div>
 </div>
 
-<!-- Create/Edit Proxy Modal -->
+<!-- ====== PROXY MODAL ====== -->
 <div id="proxyModal" class="modal-overlay">
   <div class="modal">
-    <h3 id="modalTitle">添加代理规则</h3>
-    <div class="form-group"><label>规则名称</label><input id="proxyName" placeholder="my-proxy"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+    <h3>
+      <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12 1.586l-3.293 3.293a1 1 0 101.414 1.414L12 4.414l3.293 3.293a1 1 0 001.414-1.414L13.414 3l1.293-1.293a1 1 0 00-1.414-1.414L12 1.586z" clip-rule="evenodd"/></svg>
+      <span id="modalTitle">添加代理规则</span>
+    </h3>
+    <div class="form-group"><label>规则名称</label><input id="proxyName" placeholder="my-proxy" style="font-family:var(--mono)"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       <div class="form-group"><label>协议类型</label>
         <select id="proxyType" onchange="onProxyTypeChange()"><option value="tcp">TCP</option><option value="udp">UDP</option><option value="http">HTTP</option><option value="https">HTTPS</option></select>
       </div>
       <div class="form-group"><label>客户端</label>
         <select id="proxyClientId" onchange="onClientIdChange()"><option value="">-- 请选择在线客户端 --</option></select>
-        <div style="font-size:11px;color:var(--text3);margin-top:3px" id="clientIdHint">选择已连接的客户端</div>
+        <div class="form-hint" id="clientIdHint">选择已连接的客户端</div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="form-group" id="serverPortGroup"><label>服务端监听端口</label><input id="proxyRemotePort" type="number" placeholder="6000"><div style="font-size:11px;color:var(--text3);margin-top:3px">外部用户访问的服务器端口</div></div>
-      <div class="form-group" id="domainGroup" style="display:none"><label>自定义域名</label><input id="proxyDomains" placeholder="api.example.com, web.example.com"><div style="font-size:11px;color:var(--text3);margin-top:3px">基于域名路由，逗号分隔</div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      <div class="form-group" id="serverPortGroup"><label>服务端监听端口</label><input id="proxyRemotePort" type="number" placeholder="6000" style="font-family:var(--mono)"><div class="form-hint">外部用户访问的服务器端口</div></div>
+      <div class="form-group" id="domainGroup" style="display:none"><label>自定义域名</label><input id="proxyDomains" placeholder="api.example.com, web.example.com"><div class="form-hint">基于域名路由，逗号分隔</div></div>
     </div>
-    <div class="form-group"><label>映射客户端服务地址</label><input id="proxyLocalAddr" placeholder="8080 或 192.168.1.100:3306"><div style="font-size:11px;color:var(--text3);margin-top:3px">客户端本地服务地址，只填端口默认 127.0.0.1</div></div>
+    <div class="form-group"><label>映射客户端服务地址</label><input id="proxyLocalAddr" placeholder="8080 或 192.168.1.100:3306" style="font-family:var(--mono)"><div class="form-hint">客户端本地服务地址，只填端口默认 127.0.0.1</div></div>
     <div class="form-group"><label>PROXY Protocol</label>
       <select id="proxyProtocol">
         <option value="">关闭（不注入）</option>
         <option value="v1">v1（文本格式，兼容性好）</option>
         <option value="v2">v2（二进制格式，效率高）</option>
       </select>
-      <div style="font-size:11px;color:var(--text3);margin-top:3px">向本地服务注入 PROXY Protocol 头，让后端获取用户真实 IP</div>
+      <div class="form-hint">向本地服务注入 PROXY Protocol 头，让后端获取用户真实 IP</div>
     </div>
     <div class="actions">
       <button class="btn btn-ghost" onclick="hideProxyModal()">取消</button>
@@ -200,8 +532,8 @@ td.actions{white-space:nowrap}
 const API = '/api';
 let token = localStorage.getItem('rp_token') || '';
 let ws = null;
-let editingProxy = null; // null = 创建模式, string = 编辑模式（规则名）
-let cachedClients = []; // 缓存客户端列表数据
+let editingProxy = null;
+let cachedClients = [];
 
 // ---- API ----
 async function api(method, path, body) {
@@ -249,7 +581,11 @@ function navigate(page, el) {
   document.querySelectorAll('.sidebar nav a').forEach(a=>a.classList.remove('active'));
   if (el) el.classList.add('active');
   document.querySelectorAll('.main > div[id^="page-"]').forEach(d=>d.style.display='none');
-  document.getElementById('page-'+page).style.display = 'block';
+  const target = document.getElementById('page-'+page);
+  target.style.display = 'block';
+  target.classList.remove('page-enter');
+  void target.offsetWidth;
+  target.classList.add('page-enter');
   refreshAll();
 }
 
@@ -270,12 +606,10 @@ async function refreshAll() {
   }
 }
 
-/// 仅刷新客户端列表（客户端上线/下线时立即调用）
 async function refreshClients() {
   try {
     const clients = await api('GET', '/clients');
     renderClients(clients);
-    // 同步更新仪表盘统计中的在线客户端数
     const online = clients.filter(c=>c.online).length;
     const onlineEl = document.querySelector('.stat-card:nth-child(2) .value');
     if (onlineEl) onlineEl.textContent = online;
@@ -288,10 +622,26 @@ function renderStats(status, proxies, clients) {
   const totalBwIn = proxies.reduce((s,p)=>s+p.bandwidth_in, 0);
   const totalBwOut = proxies.reduce((s,p)=>s+p.bandwidth_out, 0);
   document.getElementById('statsGrid').innerHTML = `
-    <div class="stat-card"><div class="label">版本</div><div class="value" style="font-size:20px">v${status.version}</div></div>
-    <div class="stat-card"><div class="label">在线客户端</div><div class="value online">${online}</div></div>
-    <div class="stat-card"><div class="label">代理规则</div><div class="value">${status.total_proxies}</div></div>
-    <div class="stat-card"><div class="label">服务器带宽</div><div class="value" style="font-size:18px;color:var(--primary)">↑${fmtBw(totalBwOut)} ↓${fmtBw(totalBwIn)}</div></div>
+    <div class="stat-card">
+      <div class="stat-icon"><svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M9.504 1.132a1 1 0 01.992 0l6 3.5a1 1 0 010 1.736l-6 3.5a1 1 0 01-.992 0l-6-3.5a1 1 0 010-1.736l6-3.5zM5.997 11.472l3.507 2.046a1 1 0 00.992 0l3.507-2.046-3.507-2.046a1 1 0 00-.992 0L5.997 11.472z" clip-rule="evenodd"/><path d="M3 11.5v3.75a1 1 0 00.504.868l6 3.5a1 1 0 00.992 0l6-3.5a1 1 0 00.504-.868V11.5l-3.504 2.046a3 3 0 01-2.992 0L3 11.5z"/></svg></div>
+      <div class="label">版本</div>
+      <div class="value" style="font-size:20px;font-family:var(--mono)">v${esc(status.version)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zm-1 4a3 3 0 110 6H8a3 3 0 110-6h4zm-8 1a2 2 0 100 4 2 2 0 000-4z"/></svg></div>
+      <div class="label">在线客户端</div>
+      <div class="value online">${online}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon"><svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 5a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V5zm3.293 1.293a1 1 0 111.414 1.414L5.414 9l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3zm7.414 0a1 1 0 010 1.414L14.586 9l-2.293 2.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 00-1.414 1.414z" clip-rule="evenodd"/></svg></div>
+      <div class="label">代理规则</div>
+      <div class="value">${status.total_proxies}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zm6-4a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zm6-3a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z"/></svg></div>
+      <div class="label">服务器带宽</div>
+      <div class="value" style="font-size:17px;color:var(--primary);font-family:var(--mono)">↑${fmtBw(totalBwOut)} ↓${fmtBw(totalBwIn)}</div>
+    </div>
   `;
 }
 
@@ -309,16 +659,16 @@ function renderProxies(proxies) {
     const ppLabel = p.proxy_protocol ? 'v'+p.proxy_protocol.replace('v','') : '-';
     const busy = (p.status==='starting'||p.status==='stopping');
     return `<tr>
-    <td style="color:var(--text)">${esc(p.name)}</td>
+    <td style="color:var(--text);font-weight:600;font-family:var(--mono);font-size:12px">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
-    <td>${esc(p.client_id)}</td>
-    <td>${isStream?(p.remote_port||'-'):'共享'}</td>
-    <td>${esc(clientAddr)}</td>
-    <td>${p.custom_domains.length?p.custom_domains.map(esc).join(', '):'-'}</td>
+    <td style="font-family:var(--mono);font-size:12px">${esc(p.client_id)}</td>
+    <td style="font-family:var(--mono)">${isStream?(p.remote_port||'-'):'共享'}</td>
+    <td style="font-family:var(--mono);font-size:12px">${esc(clientAddr)}</td>
+    <td style="font-size:12px">${p.custom_domains.length?p.custom_domains.map(esc).join(', '):'-'}</td>
     <td>${ppLabel}</td>
     <td><span class="badge badge-${p.status}">${statusLabel(p.status)}</span></td>
-    <td>${p.connections}</td>
-    <td style="font-size:12px">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
+    <td style="font-family:var(--mono)">${p.connections}</td>
+    <td style="font-size:12px;font-family:var(--mono)">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
     <td class="actions">
       <button class="btn btn-warn btn-sm" onclick="editProxy('${esc(p.name)}')" ${busy?'disabled style="opacity:.4;pointer-events:none"':''}>编辑</button>
       <button class="btn btn-danger btn-sm" onclick="deleteProxy('${esc(p.name)}')" ${busy?'disabled style="opacity:.4;pointer-events:none"':''}>删除</button>
@@ -335,12 +685,12 @@ function renderDashProxies(proxies) {
     const isStream = (p.proxy_type==='tcp'||p.proxy_type==='udp');
     const mapping = isStream ? ':'+p.remote_port+' → '+p.local_ip+':'+p.local_port : p.custom_domains.map(esc).join(', ');
     return `<tr>
-    <td style="color:var(--text)">${esc(p.name)}</td>
+    <td style="color:var(--text);font-weight:600;font-family:var(--mono);font-size:12px">${esc(p.name)}</td>
     <td><span class="badge badge-${p.proxy_type}">${p.proxy_type.toUpperCase()}</span></td>
-    <td style="font-size:12px">${mapping}</td>
+    <td style="font-size:12px;font-family:var(--mono)">${mapping}</td>
     <td><span class="badge badge-${p.status}">${statusLabel(p.status)}</span></td>
-    <td>${p.connections}</td>
-    <td style="font-size:12px">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
+    <td style="font-family:var(--mono)">${p.connections}</td>
+    <td style="font-size:12px;font-family:var(--mono)">↑${fmtBw(p.bandwidth_out)} ↓${fmtBw(p.bandwidth_in)}</td>
   </tr>`}).join('')}</tbody>`;
 }
 
@@ -377,7 +727,6 @@ async function editProxy(name) {
     document.getElementById('proxyClientId').value = p.client_id;
     onClientIdChange();
     document.getElementById('proxyRemotePort').value = p.remote_port || '';
-    // 组装客户端地址
     const addr = p.local_ip + ':' + p.local_port;
     document.getElementById('proxyLocalAddr').value = addr;
     document.getElementById('proxyDomains').value = p.custom_domains.join(', ');
@@ -392,7 +741,6 @@ function hideProxyModal() {
   document.getElementById('proxyName').disabled = false;
 }
 
-// 根据协议类型切换表单字段显示
 function onProxyTypeChange() {
   const type = document.getElementById('proxyType').value;
   const isStream = (type === 'tcp' || type === 'udp');
@@ -409,13 +757,10 @@ async function submitProxy() {
   const domains = document.getElementById('proxyDomains').value.trim().split(',').map(s=>s.trim()).filter(Boolean);
   const proxyProtocol = document.getElementById('proxyProtocol').value;
 
-  // 解析客户端服务地址
   let localIp = '127.0.0.1';
   let localPort = 0;
   if (localAddr.includes(':')) {
-    // 支持 IPv6 和 IPv4
     if (localAddr.startsWith('[')) {
-      // [::1]:port
       const closeBracket = localAddr.indexOf(']');
       if (closeBracket >= 0) {
         localIp = localAddr.substring(1, closeBracket);
@@ -428,7 +773,6 @@ async function submitProxy() {
       localPort = parseInt(localAddr.substring(lastColon + 1)) || 0;
     }
   } else {
-    // 只填了端口，IP 默认 127.0.0.1
     localPort = parseInt(localAddr) || 0;
   }
 
@@ -438,7 +782,6 @@ async function submitProxy() {
 
   try {
     if (editingProxy) {
-      // 更新模式：仅发送有变化的字段，HTTP/HTTPS 不发送 remote_port
       const body = { type, client_id: clientId, local_ip: localIp, local_port: localPort, custom_domains: domains, proxy_protocol: proxyProtocol };
       if (type === 'tcp' || type === 'udp') {
         body.remote_port = remotePort;
@@ -446,7 +789,6 @@ async function submitProxy() {
       await api('PUT', '/proxies/' + encodeURIComponent(editingProxy), body);
       toast('规则更新成功','success');
     } else {
-      // 创建模式
       await api('POST', '/proxies', {name, type, client_id: clientId, local_ip: localIp, local_port: localPort, remote_port: remotePort, custom_domains: domains, proxy_protocol: proxyProtocol});
       toast('规则创建成功','success');
     }
@@ -471,24 +813,21 @@ function renderClients(clients) {
   if (!clients.length) { t.innerHTML='<thead></thead><tbody></tbody>'; return; }
   t.innerHTML = `<thead><tr><th>客户端 ID</th><th>状态</th><th>操作</th></tr></thead>
   <tbody>${clients.map(c=>`<tr>
-    <td style="color:var(--text)">${esc(c.id)}</td>
+    <td style="color:var(--text);font-weight:600;font-family:var(--mono);font-size:12px">${esc(c.id)}</td>
     <td><span class="badge ${c.online?'badge-online':'badge-offline'}">${c.online?'在线':'离线'}</span></td>
     <td class="actions">${c.online?`<button class="btn btn-primary btn-sm" onclick="createProxyForClient('${esc(c.id)}')">创建规则</button>`:''}</td>
   </tr>`).join('')}</tbody>`;
-  // 如果模态框打开，刷新下拉选项
   if (document.getElementById('proxyModal').classList.contains('show')) {
     populateClientIdSelect();
   }
 }
 
-/// 快捷操作：从客户端列表直接为该客户端创建规则
 function createProxyForClient(clientId) {
   showCreateModal();
   document.getElementById('proxyClientId').value = clientId;
   onClientIdChange();
 }
 
-/// 填充客户端 ID 下拉选项
 function populateClientIdSelect() {
   const sel = document.getElementById('proxyClientId');
   const currentVal = sel.value;
@@ -502,7 +841,6 @@ function populateClientIdSelect() {
     sel.appendChild(opt);
   });
 
-  // 编辑模式下，如果当前客户端不在线，额外添加该选项
   if (editingProxy && currentVal) {
     const exists = onlineClients.some(c => c.id === currentVal);
     if (!exists) {
@@ -513,13 +851,11 @@ function populateClientIdSelect() {
     }
   }
 
-  // 恢复选中值
   if (currentVal && sel.querySelector(`option[value="${currentVal}"]`)) {
     sel.value = currentVal;
   }
 }
 
-/// 客户端 ID 选择变化时的提示
 function onClientIdChange() {
   const sel = document.getElementById('proxyClientId');
   const hint = document.getElementById('clientIdHint');
@@ -529,7 +865,7 @@ function onClientIdChange() {
   } else {
     const c = cachedClients.find(c => c.id === sel.value);
     hint.textContent = c && c.online ? '客户端在线' : '客户端离线';
-    hint.style.color = c && c.online ? 'var(--success)' : 'var(--warn)';
+    hint.style.color = c && c.online ? 'var(--primary)' : 'var(--warn)';
   }
 }
 
@@ -543,7 +879,6 @@ function connectWS() {
       if (data.type === 'status') {
         refreshAll();
       } else if (data.type === 'client_change') {
-        // 客户端上线/下线，立即刷新客户端列表
         refreshClients();
       }
     } catch(_){}
@@ -558,9 +893,15 @@ function fmtBw(bps) { if (bps < 1024) return bps.toFixed(0)+'B/s'; if (bps < 104
 function toast(msg, type) {
   const el = document.createElement('div');
   el.className = 'toast toast-' + type;
-  el.textContent = msg;
+  const icon = type === 'success'
+    ? '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>'
+    : '<svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>';
+  el.innerHTML = icon + esc(msg);
   document.body.appendChild(el);
-  setTimeout(()=>el.remove(), 3000);
+  setTimeout(()=>{
+    el.style.animation = 'toastOut .3s ease forwards';
+    setTimeout(()=>el.remove(), 300);
+  }, 2700);
 }
 
 // ---- Init ----
